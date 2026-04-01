@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Complex Numbers</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #faf9f5;
+      font-family: 'Georgia', serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    canvas { flex: 1; display: block; width: 100%; cursor: grab; }
+    canvas.dragging { cursor: grabbing; }
+    #controls {
+      padding: 12px 28px;
+      background: #faf9f5;
+      border-top: 1px solid #e0ddd5;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+    #transform-label { font-size: 19px; color: #222; min-width: 200px; }
+    .btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
+    button {
+      font-family: Georgia, serif;
+      font-size: 13px;
+      padding: 6px 16px;
+      border: 1px solid #ccc;
+      background: #fff;
+      border-radius: 20px;
+      cursor: pointer;
+      color: #555;
+      transition: all 0.15s;
+    }
+    button:hover { background: #f0ede8; border-color: #bbb; }
+    button.active { background: #222; color: #fff; border-color: #222; }
+    #zLabel {
+      margin-left: auto;
+      font-size: 13px;
+      color: #888;
+      font-family: monospace;
+      min-width: 260px;
+      text-align: right;
+    }
+  </style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="controls">
+  <div id="transform-label">z</div>
+  <div class="btn-group">
+    <button class="active" data-t="identity">z</button>
+    <button data-t="timesJ">z · j</button>
+    <button data-t="timesJ2">z · j²</button>
+    <button data-t="timesJ3">z · j³</button>
+    <button data-t="conjugate">z̄  (conjugate)</button>
+    <button data-t="modulus">|z|  (modulus)</button>
+    <button data-t="squared">z²</button>
+    <button data-t="add1">z + 1</button>
+  </div>
+  <div id="zLabel">drag the point</div>
+</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+let W, H, originX, originY, scale;
+
+function resize() {
+  W = canvas.width  = canvas.offsetWidth  * devicePixelRatio;
+  H = canvas.height = canvas.offsetHeight * devicePixelRatio;
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  originX = canvas.offsetWidth  / 2;
+  originY = canvas.offsetHeight / 2;
+  scale   = Math.min(canvas.offsetWidth, canvas.offsetHeight) / 6; // pixels per unit
+  draw();
+}
+
+// The draggable point z
+let z = { re: 2, im: 1 };
+let transform = 'identity';
+
+function applyTransform(z) {
+  switch (transform) {
+    case 'identity': return { re: z.re, im: z.im };
+    case 'timesJ':   return { re: -z.im, im: z.re };        // ×j = rotate 90°
+    case 'timesJ2':  return { re: -z.re, im: -z.im };       // ×j² = ×(-1) = rotate 180°
+    case 'timesJ3':  return { re: z.im, im: -z.re };        // ×j³ = rotate 270°
+    case 'conjugate':return { re: z.re, im: -z.im };        // reflect over real axis
+    case 'modulus':  return { re: Math.hypot(z.re, z.im), im: 0 }; // length, on real axis
+    case 'squared':  return { re: z.re*z.re - z.im*z.im, im: 2*z.re*z.im };
+    case 'add1':     return { re: z.re + 1, im: z.im };
+  }
+}
+
+const TRANSFORM_LABELS = {
+  identity:  'z',
+  timesJ:    'z · j  →  rotates 90°',
+  timesJ2:   'z · j²  =  z · (−1)  →  rotates 180°',
+  timesJ3:   'z · j³  →  rotates 270°',
+  conjugate: 'z̄  →  flip over the real axis',
+  modulus:   '|z|  →  distance from origin',
+  squared:   'z²  →  double the angle, square the length',
+  add1:      'z + 1  →  shift right by 1',
+};
+
+// Coordinate helpers
+function toPixel(re, im)  { return [originX + re * scale, originY - im * scale]; }
+function toComplex(px, py){ return { re: (px - originX) / scale, im: -(py - originY) / scale }; }
+
+// Drawing helpers
+function drawArrow(x1, y1, x2, y2, color, lw = 2, alpha = 1) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = lw;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  const headLen = 10;
+  ctx.beginPath();
+  ctx.moveTo(x2, y2);
+  ctx.lineTo(x2 - headLen * Math.cos(angle - 0.4), y2 - headLen * Math.sin(angle - 0.4));
+  ctx.lineTo(x2 - headLen * Math.cos(angle + 0.4), y2 - headLen * Math.sin(angle + 0.4));
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawDot(x, y, r, color, alpha = 1) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  // Glow
+  const grd = ctx.createRadialGradient(x, y, 0, x, y, r * 3);
+  grd.addColorStop(0, color + '55');
+  grd.addColorStop(1, 'transparent');
+  ctx.beginPath(); ctx.arc(x, y, r * 3, 0, Math.PI * 2);
+  ctx.fillStyle = grd; ctx.fill();
+  // Dot
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = color; ctx.fill();
+  ctx.restore();
+}
+
+function drawAngleArc(fromAngle, toAngle, radius, color) {
+  if (Math.abs(toAngle - fromAngle) < 0.01) return;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.globalAlpha = 0.5;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  // Draw arc from fromAngle to toAngle (both measured from positive real axis)
+  const start = -fromAngle, end = -toAngle; // canvas y is flipped
+  ctx.arc(originX, originY, radius, start, end, fromAngle > toAngle);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+function draw() {
+  const cw = canvas.offsetWidth, ch = canvas.offsetHeight;
+  ctx.clearRect(0, 0, cw, ch);
+  ctx.fillStyle = '#faf9f5';
+  ctx.fillRect(0, 0, cw, ch);
+
+  // ── Grid ──
+  const gridStep = 1; // 1 unit
+  ctx.strokeStyle = 'rgba(0,0,0,0.06)';
+  ctx.lineWidth = 1;
+  for (let r = -10; r <= 10; r++) {
+    const [px] = toPixel(r, 0);
+    ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, ch); ctx.stroke();
+  }
+  for (let i = -10; i <= 10; i++) {
+    const [,py] = toPixel(0, i);
+    ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(cw, py); ctx.stroke();
+  }
+
+  // ── Axes ──
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(0, originY); ctx.lineTo(cw, originY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(originX, 0); ctx.lineTo(originX, ch); ctx.stroke();
+
+  // Axis labels
+  ctx.font = '13px Georgia'; ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.textAlign = 'center';
+  ctx.fillText('Real', cw - 30, originY - 10);
+  ctx.fillText('j', originX + 14, 20);
+
+  // Tick labels
+  ctx.font = '11px monospace'; ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  for (let r = -8; r <= 8; r++) {
+    if (r === 0) continue;
+    const [px] = toPixel(r, 0);
+    if (px < 20 || px > cw - 20) continue;
+    ctx.textAlign = 'center';
+    ctx.fillText(r, px, originY + 16);
+  }
+  for (let i = -8; i <= 8; i++) {
+    if (i === 0) continue;
+    const [,py] = toPixel(0, i);
+    if (py < 10 || py > ch - 10) continue;
+    ctx.textAlign = 'right';
+    ctx.fillText(i === 1 ? 'j' : i === -1 ? '−j' : `${i}j`, originX - 8, py + 4);
+  }
+
+  const w = applyTransform(z);
+
+  // ── Modulus circle (dashed) ──
+  const modZ = Math.hypot(z.re, z.im);
+  ctx.save();
+  ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 6]);
+  ctx.beginPath(); ctx.arc(originX, originY, modZ * scale, 0, Math.PI * 2);
+  ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+
+  // ── Angle arc showing rotation ──
+  if (transform !== 'identity' && transform !== 'modulus' && transform !== 'add1' && transform !== 'conjugate') {
+    const angleZ = Math.atan2(z.im, z.re);
+    const angleW = Math.atan2(w.im, w.re);
+    drawAngleArc(angleZ, angleW, modZ * scale * 0.5, '#888');
+  }
+
+  // ── Dashed line from z to w (when different) ──
+  const [zx, zy] = toPixel(z.re, z.im);
+  const [wx, wy] = toPixel(w.re, w.im);
+  const dist = Math.hypot(wx - zx, wy - zy);
+  if (dist > 4 && transform !== 'identity') {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath(); ctx.moveTo(zx, zy); ctx.lineTo(wx, wy);
+    ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+  }
+
+  // ── Arrow: origin → z (orange) ──
+  drawArrow(originX, originY, zx, zy, '#c06020', 2.5);
+
+  // ── Arrow: origin → w (purple), if different ──
+  if (dist > 4 || transform !== 'identity') {
+    drawArrow(originX, originY, wx, wy, '#6030c0', 2.5, transform === 'identity' ? 0 : 1);
+  }
+
+  // ── Dot at z ──
+  drawDot(zx, zy, 7, '#c06020');
+
+  // ── Dot at w ──
+  if (transform !== 'identity') {
+    drawDot(wx, wy, 7, '#6030c0');
+  }
+
+  // ── Labels at z and w ──
+  ctx.font = 'bold 14px Georgia';
+  const zSign = z.im >= 0 ? '+' : '−';
+  const zStr  = `z = ${z.re.toFixed(2)} ${zSign} ${Math.abs(z.im).toFixed(2)}j`;
+  ctx.fillStyle = '#c06020';
+  ctx.textAlign = zx > originX + 20 ? 'left' : 'right';
+  ctx.fillText('z', zx + (zx > originX ? 12 : -12), zy - 12);
+  ctx.font = '12px Georgia';
+  ctx.fillText(zStr, zx + (zx > originX ? 12 : -12), zy + 4);
+
+  if (transform !== 'identity') {
+    const wSign = w.im >= 0 ? '+' : '−';
+    const wStr  = `${w.re.toFixed(2)} ${wSign} ${Math.abs(w.im).toFixed(2)}j`;
+    ctx.fillStyle = '#6030c0';
+    ctx.font = 'bold 14px Georgia';
+    ctx.textAlign = wx > originX + 20 ? 'left' : 'right';
+    ctx.fillText('result', wx + (wx > originX ? 12 : -12), wy - 12);
+    ctx.font = '12px Georgia';
+    ctx.fillText(wStr, wx + (wx > originX ? 12 : -12), wy + 4);
+  }
+
+  // ── Modulus line ──
+  if (transform === 'modulus') {
+    ctx.save();
+    ctx.strokeStyle = '#30a060';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(originX, originY); ctx.lineTo(zx, zy);
+    ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = '#30a060';
+    ctx.font = 'bold 13px Georgia';
+    ctx.textAlign = 'center';
+    const mx = (originX + zx) / 2, my = (originY + zy) / 2;
+    ctx.fillText(`|z| = ${modZ.toFixed(2)}`, mx - 18, my - 10);
+    ctx.restore();
+  }
+
+  // Update z label in controls
+  const zSignLabel = z.im >= 0 ? '+' : '−';
+  const wSignLabel = w.im >= 0 ? '+' : '−';
+  const lhs = `z = ${z.re.toFixed(2)} ${zSignLabel} ${Math.abs(z.im).toFixed(2)}j`;
+  const rhs = transform !== 'identity'
+    ? `  →  ${w.re.toFixed(2)} ${wSignLabel} ${Math.abs(w.im).toFixed(2)}j`
+    : '';
+  document.getElementById('zLabel').textContent = lhs + rhs;
+}
+
+// ── Dragging ──
+let dragging = false;
+function getPos(e) {
+  const r = canvas.getBoundingClientRect();
+  const dpr = devicePixelRatio;
+  return { x: (e.clientX - r.left), y: (e.clientY - r.top) };
+}
+
+function hitTest(pos) {
+  const [zx, zy] = toPixel(z.re, z.im);
+  return Math.hypot(pos.x - zx, pos.y - zy) < 20;
+}
+
+canvas.addEventListener('mousedown', e => {
+  const pos = getPos(e);
+  if (hitTest(pos)) { dragging = true; canvas.classList.add('dragging'); }
+});
+
+canvas.addEventListener('mousemove', e => {
+  const pos = getPos(e);
+  if (dragging) {
+    z = toComplex(pos.x, pos.y);
+    draw();
+  } else {
+    canvas.style.cursor = hitTest(pos) ? 'grab' : 'default';
+  }
+});
+
+canvas.addEventListener('mouseup', () => { dragging = false; canvas.classList.remove('dragging'); });
+canvas.addEventListener('mouseleave', () => { dragging = false; canvas.classList.remove('dragging'); });
+
+// ── Buttons ──
+document.querySelectorAll('[data-t]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-t]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    transform = btn.dataset.t;
+    document.getElementById('transform-label').textContent = TRANSFORM_LABELS[transform];
+    draw();
+  });
+});
+
+window.addEventListener('resize', () => {
+  canvas.width  = canvas.offsetWidth  * devicePixelRatio;
+  canvas.height = canvas.offsetHeight * devicePixelRatio;
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  originX = canvas.offsetWidth  / 2;
+  originY = canvas.offsetHeight / 2;
+  scale   = Math.min(canvas.offsetWidth, canvas.offsetHeight) / 6;
+  draw();
+});
+
+resize();
+</script>
+</body>
+</html>
