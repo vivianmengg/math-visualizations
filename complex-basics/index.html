@@ -444,7 +444,7 @@ function draw() {
 
     // Swept arc along the modulus circle
     ctx.save();
-    ctx.strokeStyle = '#30a080';
+    ctx.strokeStyle = '#2a3d8f';
     ctx.lineWidth = 2.5;
     ctx.globalAlpha = 0.75;
     ctx.beginPath();
@@ -457,43 +457,43 @@ function draw() {
     const labelR = r * scale + 22;
     ctx.save();
     ctx.font = '13px Georgia';
-    ctx.fillStyle = '#30a080';
+    ctx.fillStyle = '#2a3d8f';
     ctx.globalAlpha = et;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(ROT_LABEL[transform], cx0 + labelR * Math.cos(labelAngle), cy0 + labelR * Math.sin(labelAngle));
     ctx.restore();
 
-    drawArrow(cx0, cy0, zx, zy, '#c06020', 2.5);
-    drawArrow(cx0, cy0, dotX, dotY, '#30a080', 2, 0.7 * et);
-    drawDot(zx, zy, 7, '#c06020');
-    drawDot(dotX, dotY, 7, '#30a080');
+    drawArrow(cx0, cy0, zx, zy, '#7bafd4', 2.5);
+    drawArrow(cx0, cy0, dotX, dotY, '#2a3d8f', 2, 0.7 * et);
+    drawDot(zx, zy, 7, '#7bafd4');
+    drawDot(dotX, dotY, 7, '#2a3d8f');
     ctx.font = 'bold 14px Georgia';
-    ctx.fillStyle = '#c06020';
+    ctx.fillStyle = '#7bafd4';
     ctx.textAlign = zx > cx0 + 20 ? 'left' : 'right';
     ctx.fillText('z', zx + (zx > cx0 ? 12 : -12), zy - 12);
 
   } else if (animating && ANIM_TRANSFORMS.has(transform)) {
     // ── Hop animation: arc through each integer grid step ──
-    drawArrow(originX + panX, originY + panY, zx, zy, '#c06020', 2.5);
+    drawArrow(originX + panX, originY + panY, zx, zy, '#7bafd4', 2.5);
     // Completed hops (faded)
     for (let i = 0; i < animStep && i < animPath.length - 1; i++) {
-      drawHopArc(animPath[i], animPath[i + 1], 1, '#30a080', 0.25);
+      drawHopArc(animPath[i], animPath[i + 1], 1, '#2a3d8f', 0.25);
     }
     // Waypoint dots at completed intermediate steps
     for (let i = 1; i <= animStep && i < animPath.length - 1; i++) {
       const [px, py] = toPixel(animPath[i].re, animPath[i].im);
-      drawDot(px, py, 5, '#30a080', 0.45);
+      drawDot(px, py, 5, '#2a3d8f', 0.45);
     }
     // Current hop in progress
     if (animStep < animPath.length - 1) {
       const et = easeInOut(animT);
-      const [dotX, dotY] = drawHopArc(animPath[animStep], animPath[animStep + 1], et, '#30a080', 0.9);
-      drawDot(dotX, dotY, 7, '#30a080');
+      const [dotX, dotY] = drawHopArc(animPath[animStep], animPath[animStep + 1], et, '#2a3d8f', 0.9);
+      drawDot(dotX, dotY, 7, '#2a3d8f');
     }
-    drawDot(zx, zy, 7, '#c06020');
+    drawDot(zx, zy, 7, '#7bafd4');
     ctx.font = 'bold 14px Georgia';
-    ctx.fillStyle = '#c06020';
+    ctx.fillStyle = '#7bafd4';
     ctx.textAlign = zx > originX + 20 ? 'left' : 'right';
     ctx.fillText('z', zx + (zx > originX ? 12 : -12), zy - 12);
   } else {
@@ -507,17 +507,17 @@ function draw() {
       ctx.stroke(); ctx.setLineDash([]); ctx.restore();
     }
 
-    drawArrow(originX + panX, originY + panY, zx, zy, '#c06020', 2.5);
+    drawArrow(originX + panX, originY + panY, zx, zy, '#7bafd4', 2.5);
     if (dist > 4 || transform !== 'identity') {
-      drawArrow(originX + panX, originY + panY, wx, wy, '#6030c0', 2.5, transform === 'identity' ? 0 : 1);
+      drawArrow(originX + panX, originY + panY, wx, wy, '#2a3d8f', 2.5, transform === 'identity' ? 0 : 1);
     }
-    drawDot(zx, zy, 7, '#c06020');
-    if (transform !== 'identity') { drawDot(wx, wy, 7, '#6030c0'); }
+    drawDot(zx, zy, 7, '#7bafd4');
+    if (transform !== 'identity') { drawDot(wx, wy, 7, '#2a3d8f'); }
 
     ctx.font = 'bold 14px Georgia';
     const zSign = z.im >= 0 ? '+' : '−';
     const zStr  = `z = ${z.re.toFixed(2)} ${zSign} ${Math.abs(z.im).toFixed(2)}j`;
-    ctx.fillStyle = '#c06020';
+    ctx.fillStyle = '#7bafd4';
     ctx.textAlign = zx > originX + 20 ? 'left' : 'right';
     ctx.fillText('z', zx + (zx > originX ? 12 : -12), zy - 12);
     ctx.font = '12px Georgia';
@@ -526,7 +526,7 @@ function draw() {
     if (transform !== 'identity') {
       const wSign = w.im >= 0 ? '+' : '−';
       const wStr  = `${w.re.toFixed(2)} ${wSign} ${Math.abs(w.im).toFixed(2)}j`;
-      ctx.fillStyle = '#6030c0';
+      ctx.fillStyle = '#2a3d8f';
       ctx.font = 'bold 14px Georgia';
       ctx.textAlign = wx > originX + 20 ? 'left' : 'right';
       ctx.fillText('result', wx + (wx > originX ? 12 : -12), wy - 12);
@@ -537,13 +537,13 @@ function draw() {
     // ── Modulus line ──
     if (transform === 'modulus') {
       ctx.save();
-      ctx.strokeStyle = '#30a060';
+      ctx.strokeStyle = '#2a3d8f';
       ctx.lineWidth = 2;
       ctx.setLineDash([6, 4]);
       ctx.beginPath();
       ctx.moveTo(originX + panX, originY + panY); ctx.lineTo(zx, zy);
       ctx.stroke(); ctx.setLineDash([]);
-      ctx.fillStyle = '#30a060';
+      ctx.fillStyle = '#2a3d8f';
       ctx.font = 'bold 13px Georgia';
       ctx.textAlign = 'center';
       const mx = (originX + zx) / 2, my = (originY + zy) / 2;
