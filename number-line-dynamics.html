@@ -44,7 +44,7 @@
     }
     button:hover { background: #f0ede8; }
     button:disabled { opacity: 0.3; cursor: default; }
-    #stepInfo { font-size: 13px; color: #7050c0; min-width: 160px; font-style: italic; }
+    #stepInfo { font-size: 13px; color: #20b0a8; min-width: 160px; font-style: italic; }
     .hint { font-size: 12px; color: #bbb; font-style: italic; margin-left: auto; }
   </style>
 </head>
@@ -99,6 +99,9 @@ function fixedPoints() {
   return [(1 + sq) / 2, (1 - sq) / 2];
 }
 function isStable(fp) { return Math.abs(2 * fp) < 1; }
+
+// --- Hover state ---
+let hoveredN = null;
 
 // --- Orbit animation state ---
 let orbit      = [];
@@ -248,13 +251,12 @@ function drawFixedPoints() {
 }
 
 function getArcColor(n) {
-  const esc = escapeFraction(n);
-  if (esc === 0) return '#c06020'; // bounded → orange
-  // slow escape (small growth) → red, fast escape (big growth) → blue, through purple
-  const t = esc;
-  const r = Math.floor(210 - t * 180);
-  const g = Math.floor(55  + t * 15);
-  const b = Math.floor(30  + t * 170);
+  const t = escapeFraction(n);
+  if (t === 0) return '#c88228'; // bounded / bouncing → warm amber
+  // escaping: lavender → deep indigo
+  const r = Math.floor(180 - t * 125);
+  const g = Math.floor(140 - t * 120);
+  const b = Math.floor(220 - t * 80);
   return `rgb(${r},${g},${b})`;
 }
 
@@ -270,40 +272,94 @@ function drawStaticArcs() {
   });
   points.sort((a,b)=>a-b);
 
+  const isHovering = hoveredN !== null;
+
   const offRight=[], offLeft=[];
   points.forEach(n => {
     const fn = f(n), diff = fn-n, absDiff = Math.abs(diff);
     const color = getArcColor(n);
-    if (absDiff < 0.02) { drawLoop(n, color); return; }
-    const h = Math.min(absDiff/viewSpan*MAX_ARC_H*3.5, MAX_ARC_H);
-    if (fn >= VIEW_MIN && fn <= VIEW_MAX) {
-      drawArcShape(n, fn, h, color);
-    } else if (fn > VIEW_MAX) {
-      drawArcOffEdge(n, Math.min(h, MAX_ARC_H*0.8), true, color);
-      offRight.push({n, fn, color});
-    } else {
-      drawArcOffEdge(n, Math.min(h, MAX_ARC_H*0.8), false, color);
-      offLeft.push({n, fn, color});
+    const hovered = isHovering && Math.abs(n - hoveredN) < 0.3;
+    const alpha = isHovering ? (hovered ? 1.0 : 0.1) : 0.85;
+    const lw = hovered ? 2.6 : 1.8;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    if (absDiff < 0.02) { drawLoop(n, color); }
+    else {
+      const h = Math.min(absDiff/viewSpan*MAX_ARC_H*3.5, MAX_ARC_H);
+      if (fn >= VIEW_MIN && fn <= VIEW_MAX) {
+        drawArcShape(n, fn, h, color, lw);
+      } else if (fn > VIEW_MAX) {
+        drawArcOffEdge(n, Math.min(h, MAX_ARC_H*0.8), true, color);
+        if (hovered || !isHovering) offRight.push({n, fn, color});
+      } else {
+        drawArcOffEdge(n, Math.min(h, MAX_ARC_H*0.8), false, color);
+        if (hovered || !isHovering) offLeft.push({n, fn, color});
+      }
+    }
+    ctx.restore();
+
+    // Label for hovered arc
+    if (hovered) {
+      const ly = lineY();
+      const h = Math.min(absDiff/viewSpan*MAX_ARC_H*3.5, MAX_ARC_H);
+      const cx = toCanvasX(n);
+      const fnStr = Math.abs(fn) >= 100 ? Math.round(fn).toString() : fn.toFixed(2);
+      ctx.font = 'bold 13px Georgia';
+      ctx.fillStyle = color;
+      ctx.textAlign = 'center';
+      ctx.fillText(`${n} → ${fnStr}`, cx, ly - h - 14);
     }
   });
 
-  ctx.font='13px Georgia';
-  offRight.forEach(({n,fn,color},i) => {
-    const s = Math.abs(fn)>=100 ? Math.round(fn).toString() : fn.toFixed(1);
-    ctx.fillStyle=color; ctx.textAlign='right';
-    ctx.fillText(`${n} → ${s}`, W()-10, 18+i*19);
-  });
-  offLeft.forEach(({n,fn,color},i) => {
-    const s = Math.abs(fn)>=100 ? Math.round(fn).toString() : fn.toFixed(1);
-    ctx.fillStyle=color; ctx.textAlign='left';
-    ctx.fillText(`${n} → ${s}`, 10, 18+i*19);
-  });
+  if (!isHovering) {
+    ctx.font='13px Georgia';
+    offRight.forEach(({n,fn,color},i) => {
+      const s = Math.abs(fn)>=100 ? Math.round(fn).toString() : fn.toFixed(1);
+      ctx.fillStyle=color; ctx.textAlign='right';
+      ctx.fillText(`${n} → ${s}`, W()-10, 18+i*19);
+    });
+    offLeft.forEach(({n,fn,color},i) => {
+      const s = Math.abs(fn)>=100 ? Math.round(fn).toString() : fn.toFixed(1);
+      ctx.fillStyle=color; ctx.textAlign='left';
+      ctx.fillText(`${n} → ${s}`, 10, 18+i*19);
+    });
+  }
+}
+
+function drawLegend() {
+  const x = 18, y = 18, w = 130, h = 10;
+  ctx.save();
+  ctx.globalAlpha = 0.85;
+  ctx.font = '11px Georgia';
+
+  // Amber dot + label for bounded
+  ctx.beginPath(); ctx.arc(x + 6, y + 5, 5, 0, Math.PI * 2);
+  ctx.fillStyle = '#c88228'; ctx.fill();
+  ctx.fillStyle = '#888'; ctx.textAlign = 'left';
+  ctx.fillText('bounded', x + 16, y + 9);
+
+  // Purple gradient bar for escaping
+  const bx = x, by = y + 26;
+  const grad = ctx.createLinearGradient(bx, 0, bx + w, 0);
+  grad.addColorStop(0, 'rgb(180,140,220)');
+  grad.addColorStop(1, 'rgb(55,20,140)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.roundRect(bx, by, w, h, 3);
+  ctx.fill();
+  ctx.fillStyle = '#888';
+  ctx.textAlign = 'left';  ctx.fillText('gradual escape', bx, by + h + 13);
+  ctx.textAlign = 'right'; ctx.fillText('explosive', bx + w, by + h + 13);
+
+  ctx.restore();
 }
 
 function drawOrbitAnimation() {
   if (!orbit.length) return;
   const ly = lineY();
-  const ORBIT_COLOR = '#6030c0';
+  const ORBIT_COLOR = '#20b0a8';
+  const ORBIT_GLOW  = 'rgba(32, 176, 168,';
 
   // Faded past arcs
   for (let i = 0; i < orbitStep; i++) {
@@ -318,17 +374,17 @@ function drawOrbitAnimation() {
     }
     if (a >= VIEW_MIN && a <= VIEW_MAX) {
       ctx.beginPath(); ctx.arc(toCanvasX(a), ly, 4, 0, Math.PI*2);
-      ctx.fillStyle = `rgba(96,48,192,${alpha})`; ctx.fill();
+      ctx.fillStyle = `${ORBIT_GLOW}${alpha})`; ctx.fill();
     }
   }
 
   // Current position dot
   const curPos = orbit[orbitStep];
   if (isFinite(curPos) && curPos >= VIEW_MIN && curPos <= VIEW_MAX && arcT === 0) {
-    const grd = ctx.createRadialGradient(toCanvasX(curPos), ly, 0, toCanvasX(curPos), ly, 18);
-    grd.addColorStop(0, 'rgba(120,60,230,0.35)');
-    grd.addColorStop(1, 'rgba(120,60,230,0)');
-    ctx.beginPath(); ctx.arc(toCanvasX(curPos), ly, 18, 0, Math.PI*2);
+    const grd = ctx.createRadialGradient(toCanvasX(curPos), ly, 0, toCanvasX(curPos), ly, 22);
+    grd.addColorStop(0, `${ORBIT_GLOW}0.45)`);
+    grd.addColorStop(1, `${ORBIT_GLOW}0)`);
+    ctx.beginPath(); ctx.arc(toCanvasX(curPos), ly, 22, 0, Math.PI*2);
     ctx.fillStyle = grd; ctx.fill();
     ctx.beginPath(); ctx.arc(toCanvasX(curPos), ly, 6, 0, Math.PI*2);
     ctx.fillStyle = ORBIT_COLOR; ctx.fill();
@@ -361,16 +417,17 @@ function drawOrbitAnimation() {
     }
     ctx.strokeStyle = ORBIT_COLOR; ctx.lineWidth = 2.2; ctx.stroke();
 
-    // Traveling dot
+    // Traveling dot with glow
     const dotPt = bezierPt(easedT, cx1,ly_, cx1,ly_-h, cx2,ly_-h, cx2,ly_);
-    const grd = ctx.createRadialGradient(dotPt.x, dotPt.y, 0, dotPt.x, dotPt.y, 14);
-    grd.addColorStop(0, 'rgba(120,60,230,0.4)');
-    grd.addColorStop(1, 'rgba(120,60,230,0)');
-    ctx.beginPath(); ctx.arc(dotPt.x, dotPt.y, 14, 0, Math.PI*2);
+    const grd = ctx.createRadialGradient(dotPt.x, dotPt.y, 0, dotPt.x, dotPt.y, 18);
+    grd.addColorStop(0, `${ORBIT_GLOW}0.5)`);
+    grd.addColorStop(0.4, `${ORBIT_GLOW}0.25)`);
+    grd.addColorStop(1, `${ORBIT_GLOW}0)`);
+    ctx.beginPath(); ctx.arc(dotPt.x, dotPt.y, 18, 0, Math.PI*2);
     ctx.fillStyle = grd; ctx.fill();
     ctx.beginPath(); ctx.arc(dotPt.x, dotPt.y, 6, 0, Math.PI*2);
     ctx.fillStyle = ORBIT_COLOR; ctx.fill();
-    ctx.beginPath(); ctx.arc(dotPt.x, dotPt.y, 3, 0, Math.PI*2);
+    ctx.beginPath(); ctx.arc(dotPt.x, dotPt.y, 2.5, 0, Math.PI*2);
     ctx.fillStyle = '#fff'; ctx.fill();
 
     // Value label near dot
@@ -410,6 +467,7 @@ function loop(ts) {
   drawStaticArcs();
   drawNumberLine();
   drawFixedPoints();
+  drawLegend();
   drawOrbitAnimation();
 
   requestAnimationFrame(loop);
@@ -419,6 +477,7 @@ function loop(ts) {
 document.getElementById('cSlider').addEventListener('input', e => {
   c = parseFloat(e.target.value);
   document.getElementById('cVal').textContent = (c>=0?'+':'') + c.toFixed(2);
+  document.getElementById('formula').textContent = `f(n) = n² ${c>=0?'+':'\u2212'} ${Math.abs(c).toFixed(2)}`;
   if (orbit.length) setOrbit(orbit[0]);
 });
 
@@ -458,6 +517,21 @@ canvas.addEventListener('click', e => {
     updateOrbitControls();
   }
 });
+
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const px = e.clientX - rect.left;
+  const py = e.clientY - rect.top;
+  if (Math.abs(py - lineY()) < 55) {
+    const nearest = Math.round(toMathX(px));
+    hoveredN = (nearest >= Math.ceil(VIEW_MIN) && nearest <= Math.floor(VIEW_MAX)) ? nearest : null;
+  } else {
+    hoveredN = null;
+  }
+  canvas.style.cursor = hoveredN !== null ? 'pointer' : 'crosshair';
+});
+
+canvas.addEventListener('mouseleave', () => { hoveredN = null; });
 
 window.addEventListener('resize', () => {
   canvas.width  = canvas.offsetWidth  * devicePixelRatio;
