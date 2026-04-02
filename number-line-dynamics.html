@@ -31,20 +31,37 @@
     #cVal { font-size: 14px; color: #333; font-family: monospace; }
     #fpLabel { font-size: 13px; color: #999; }
     .sep { width: 1px; height: 28px; background: #ddd; }
-    .orbit-controls { display: flex; align-items: center; gap: 10px; }
+    .orbit-controls { display: flex; align-items: center; gap: 8px; }
+    .transport {
+      display: flex; align-items: center;
+      background: #f4f2ee;
+      border: 1px solid #e0ddd8;
+      border-radius: 20px;
+      padding: 3px 4px;
+      gap: 2px;
+    }
     button {
       font-family: Georgia, serif;
-      font-size: 14px;
-      padding: 5px 14px;
-      border: 1px solid #ccc;
-      background: #fff;
-      border-radius: 4px;
+      font-size: 13px;
+      padding: 4px 12px;
+      border: none;
+      background: transparent;
+      border-radius: 16px;
       cursor: pointer;
-      color: #444;
+      color: #555;
+      transition: background 0.12s;
     }
-    button:hover { background: #f0ede8; }
-    button:disabled { opacity: 0.3; cursor: default; }
-    #stepInfo { font-size: 13px; color: #20b0a8; min-width: 160px; font-style: italic; }
+    button:hover:not(:disabled) { background: #e8e3dc; }
+    button:disabled { opacity: 0.28; cursor: default; }
+    #btnPlay {
+      background: #2a3d8f;
+      color: #fff;
+      padding: 5px 18px;
+      font-size: 14px;
+    }
+    #btnPlay:hover:not(:disabled) { background: #1e2e6e; }
+    #btnPlay:disabled { background: #2a3d8f; }
+    #stepInfo { font-size: 13px; color: #e0728a; min-width: 160px; font-style: italic; }
     .hint { font-size: 12px; color: #bbb; font-style: italic; margin-left: auto; }
   </style>
 </head>
@@ -57,10 +74,12 @@
   </label>
   <div class="sep"></div>
   <div class="orbit-controls">
-    <button id="btnStep" disabled>Step →</button>
-    <button id="btnPlay" disabled>▶ Play</button>
-    <button id="btnReset" disabled>↺</button>
-    <label>Speed <input type="range" id="speedSlider" min="0.3" max="3" step="0.1" value="1"></label>
+    <div class="transport">
+      <button id="btnReset" disabled title="Reset">↺</button>
+      <button id="btnPlay" disabled>▶</button>
+      <button id="btnStep" disabled title="Step forward">→</button>
+    </div>
+    <label style="font-size:12px; color:#aaa;">speed <input type="range" id="speedSlider" min="0.3" max="3" step="0.1" value="1"></label>
   </div>
   <div id="stepInfo">click a number to trace</div>
   <div class="sep"></div>
@@ -141,7 +160,7 @@ function updateOrbitControls() {
   document.getElementById('btnStep').disabled  = !canAdvance || isPlaying;
   document.getElementById('btnPlay').disabled  = !canAdvance;
   document.getElementById('btnReset').disabled = !hasOrbit;
-  document.getElementById('btnPlay').textContent = isPlaying ? '⏸ Pause' : '▶ Play';
+  document.getElementById('btnPlay').textContent = isPlaying ? '⏸' : '▶';
   if (hasOrbit) {
     const cur = orbit[orbitStep];
     document.getElementById('stepInfo').textContent = isFinite(cur)
@@ -187,7 +206,7 @@ function drawArcOffEdge(x1, h, goRight, color) {
   ctx.moveTo(cx1, ly);
   ctx.bezierCurveTo(cx1, ly - h, cx2, ly - h, cx2, ly);
   ctx.strokeStyle = color; ctx.lineWidth = 1.8;
-  ctx.setLineDash([5, 4]); ctx.stroke(); ctx.setLineDash([]);
+  ctx.stroke();
 }
 
 function drawLoop(n, color) {
@@ -203,13 +222,28 @@ function drawLoop(n, color) {
 // --- Draw layers ---
 function drawFateBackground() {
   const ly = lineY();
-  for (let px = 0; px < Math.ceil(W()); px++) {
-    const esc = escapeFraction(toMathX(px));
+  const W_ = Math.ceil(W());
+  // Precompute escape values
+  const vals = new Float32Array(W_);
+  for (let px = 0; px < W_; px++) vals[px] = escapeFraction(toMathX(px));
+  // Smooth with a small box blur to remove discrete banding
+  const blur = 4;
+  const smoothed = new Float32Array(W_);
+  for (let px = 0; px < W_; px++) {
+    let sum = 0, count = 0;
+    for (let d = -blur; d <= blur; d++) {
+      const i = px + d;
+      if (i >= 0 && i < W_) { sum += vals[i]; count++; }
+    }
+    smoothed[px] = sum / count;
+  }
+  for (let px = 0; px < W_; px++) {
+    const esc = smoothed[px];
     let r, g, b;
     if (esc === 0) { r=240; g=220; b=160; }
     else { const t=esc; r=Math.floor(160+t*40); g=Math.floor(180+t*40); b=Math.floor(210+t*45); }
     ctx.fillStyle = `rgba(${r},${g},${b},0.35)`;
-    ctx.fillRect(px, ly - 6, 1, 12);
+    ctx.fillRect(px, ly - 6, 1.5, 12);
   }
 }
 
@@ -253,10 +287,10 @@ function drawFixedPoints() {
 function getArcColor(n) {
   const t = escapeFraction(n);
   if (t === 0) return '#c88228'; // bounded / bouncing → warm amber
-  // escaping: lavender → deep indigo
-  const r = Math.floor(180 - t * 125);
-  const g = Math.floor(140 - t * 120);
-  const b = Math.floor(220 - t * 80);
+  // escaping: dark navy → bright navy
+  const r = Math.floor(18  + t * 52);   // 18  → 70
+  const g = Math.floor(28  + t * 82);   // 28  → 110
+  const b = Math.floor(100 + t * 140);  // 100 → 240
   return `rgb(${r},${g},${b})`;
 }
 
@@ -278,12 +312,15 @@ function drawStaticArcs() {
   points.forEach(n => {
     const fn = f(n), diff = fn-n, absDiff = Math.abs(diff);
     const color = getArcColor(n);
+    const esc = escapeFraction(n);
     const hovered = isHovering && Math.abs(n - hoveredN) < 0.3;
     const alpha = isHovering ? (hovered ? 1.0 : 0.1) : 0.85;
     const lw = hovered ? 2.6 : 1.8;
+    const dashed = esc > 0 && !hovered;
 
     ctx.save();
     ctx.globalAlpha = alpha;
+    if (dashed) ctx.setLineDash([5, 4]);
     if (absDiff < 0.02) { drawLoop(n, color); }
     else {
       const h = Math.min(absDiff/viewSpan*MAX_ARC_H*3.5, MAX_ARC_H);
@@ -333,24 +370,19 @@ function drawLegend() {
   ctx.globalAlpha = 0.85;
   ctx.font = '11px Georgia';
 
-  // Amber dot + label for bounded
-  ctx.beginPath(); ctx.arc(x + 6, y + 5, 5, 0, Math.PI * 2);
-  ctx.fillStyle = '#c88228'; ctx.fill();
+  // Bounded — solid amber arc swatch
+  ctx.strokeStyle = '#c88228'; ctx.lineWidth = 1.8; ctx.setLineDash([]);
+  ctx.beginPath(); ctx.arc(x + 10, y + 5, 8, Math.PI, 0); ctx.stroke();
   ctx.fillStyle = '#888'; ctx.textAlign = 'left';
-  ctx.fillText('bounded', x + 16, y + 9);
+  ctx.fillText('bounded', x + 24, y + 9);
 
-  // Purple gradient bar for escaping
-  const bx = x, by = y + 26;
-  const grad = ctx.createLinearGradient(bx, 0, bx + w, 0);
-  grad.addColorStop(0, 'rgb(180,140,220)');
-  grad.addColorStop(1, 'rgb(55,20,140)');
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.roundRect(bx, by, w, h, 3);
-  ctx.fill();
-  ctx.fillStyle = '#888';
-  ctx.textAlign = 'left';  ctx.fillText('gradual escape', bx, by + h + 13);
-  ctx.textAlign = 'right'; ctx.fillText('explosive', bx + w, by + h + 13);
+  // Non-bounded — dashed navy swatch
+  const by2 = y + 26;
+  ctx.strokeStyle = 'rgb(40,65,180)'; ctx.lineWidth = 1.8; ctx.setLineDash([5, 4]);
+  ctx.beginPath(); ctx.arc(x + 10, by2 + 5, 8, Math.PI, 0); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#888'; ctx.textAlign = 'left';
+  ctx.fillText('non-bounded', x + 24, by2 + 9);
 
   ctx.restore();
 }
@@ -358,8 +390,8 @@ function drawLegend() {
 function drawOrbitAnimation() {
   if (!orbit.length) return;
   const ly = lineY();
-  const ORBIT_COLOR = '#20b0a8';
-  const ORBIT_GLOW  = 'rgba(32, 176, 168,';
+  const ORBIT_COLOR = '#e0728a';
+  const ORBIT_GLOW  = 'rgba(224, 114, 138,';
 
   // Faded past arcs
   for (let i = 0; i < orbitStep; i++) {
