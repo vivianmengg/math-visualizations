@@ -249,8 +249,12 @@ function drawFixedPoints() {
 
 function getArcColor(n) {
   const esc = escapeFraction(n);
-  if (esc === 0) return '#c06020';
-  const t=esc, r=Math.floor(40+t*40), g=Math.floor(80+t*30), b=Math.floor(170+t*60);
+  if (esc === 0) return '#c06020'; // bounded → orange
+  // slow escape (small growth) → red, fast escape (big growth) → blue, through purple
+  const t = esc;
+  const r = Math.floor(210 - t * 180);
+  const g = Math.floor(55  + t * 15);
+  const b = Math.floor(30  + t * 170);
   return `rgb(${r},${g},${b})`;
 }
 
