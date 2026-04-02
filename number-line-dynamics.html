@@ -63,10 +63,48 @@
     #btnPlay:disabled { background: #2a3d8f; }
     #stepInfo { font-size: 13px; color: #e0728a; min-width: 160px; font-style: italic; }
     .hint { font-size: 12px; color: #bbb; font-style: italic; margin-left: auto; }
+    #orbitPanel {
+      position: absolute;
+      top: 16px; right: 16px;
+      width: 175px;
+      max-height: 55vh;
+      background: rgba(250,249,245,0.93);
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-family: monospace;
+      font-size: 12px;
+      overflow-y: auto;
+      display: none;
+      pointer-events: none;
+    }
+    #orbitPanel .panel-title {
+      font-family: Georgia, serif;
+      font-size: 11px;
+      color: #999;
+      margin-bottom: 6px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    #orbitPanel .term {
+      display: flex;
+      justify-content: space-between;
+      padding: 2px 0;
+      border-bottom: 1px solid #f0ede8;
+      color: #444;
+    }
+    #orbitPanel .term.current { color: #e0728a; font-weight: bold; }
+    #orbitPanel .term .idx { color: #aaa; min-width: 28px; }
   </style>
 </head>
 <body>
-<canvas id="canvas"></canvas>
+<div style="position:relative; flex:1; display:flex; flex-direction:column;">
+<canvas id="canvas" style="flex:1; display:block; width:100%; cursor:crosshair;"></canvas>
+<div id="orbitPanel">
+  <div class="panel-title">Sequence</div>
+  <div id="orbitTerms"></div>
+</div>
+</div>
 <div id="controls">
   <div id="formula">f(n) = n² + c</div>
   <label>c = <span id="cVal">+0.00</span>&ensp;
@@ -75,10 +113,11 @@
   <div class="sep"></div>
   <div class="orbit-controls">
     <div class="transport">
-      <button id="btnReset" disabled title="Reset">↺</button>
+      <button id="btnReset" disabled title="Restart from beginning">↺</button>
       <button id="btnPlay" disabled>▶</button>
       <button id="btnStep" disabled title="Step forward">→</button>
     </div>
+    <button id="btnClear" disabled title="Clear orbit" style="font-size:15px; padding:3px 10px;">×</button>
     <label style="font-size:12px; color:#aaa;">speed <input type="range" id="speedSlider" min="0.3" max="3" step="0.1" value="1"></label>
   </div>
   <div id="stepInfo">click a number to trace</div>
@@ -92,7 +131,64 @@ const canvas = document.getElementById('canvas');
 const ctx    = canvas.getContext('2d');
 let c = 0;
 
-const VIEW_MIN = -4.5, VIEW_MAX = 5.5;
+const DEFAULT_MIN = -4.5, DEFAULT_MAX = 5.5;
+const VIEW_LIMIT  = 1e6;
+const LERP_SPEED  = 0.04;
+
+let VIEW_MIN = DEFAULT_MIN, VIEW_MAX = DEFAULT_MAX;
+let targetMin = DEFAULT_MIN, targetMax = DEFAULT_MAX;
+
+function resetView() {
+  VIEW_MIN = DEFAULT_MIN; VIEW_MAX = DEFAULT_MAX;
+  targetMin = DEFAULT_MIN; targetMax = DEFAULT_MAX;
+}
+
+function showArcInView(a, b) {
+  if (!isFinite(a) || !isFinite(b)) return;
+  const pad = (targetMax - targetMin) * 0.12;
+  if (a >= targetMin + pad && a <= targetMax - pad &&
+      b >= targetMin + pad && b <= targetMax - pad) return;
+  const lo = Math.min(a, b), hi = Math.max(a, b);
+  const span = Math.max(hi - lo, 1);
+  targetMin = lo - span * 0.35;
+  targetMax = hi + span * 0.35;
+}
+
+function centerTightOnPoint(point) {
+  if (!isFinite(point) || Math.abs(point) > VIEW_LIMIT) return;
+  const prev = orbitStep > 0 ? orbit[orbitStep - 1] : point;
+  const hopSpan = Math.abs(point - prev);
+  const currentRange = targetMax - targetMin;
+  if (hopSpan < currentRange * 0.25) return; // small hop — leave view alone
+  const range = Math.max(Math.abs(point) * 0.1, hopSpan * 0.25, 6);
+  targetMin = point - range * 0.5;
+  targetMax = point + range * 0.5;
+}
+
+function stepView() {
+  VIEW_MIN += (targetMin - VIEW_MIN) * LERP_SPEED;
+  VIEW_MAX += (targetMax - VIEW_MAX) * LERP_SPEED;
+}
+
+function niceInterval(range) {
+  const rough = range / 7;
+  const mag = Math.pow(10, Math.floor(Math.log10(Math.max(rough, 0.001))));
+  const norm = rough / mag;
+  if (norm < 1.5) return mag;
+  if (norm < 3.5) return 2 * mag;
+  if (norm < 7.5) return 5 * mag;
+  return 10 * mag;
+}
+
+function nicePoints() {
+  const interval = niceInterval(VIEW_MAX - VIEW_MIN);
+  const first = Math.ceil(VIEW_MIN / interval) * interval;
+  const pts = [];
+  for (let n = first; n <= VIEW_MAX + interval * 0.01; n += interval) {
+    pts.push(Math.round(n / interval) * interval);
+  }
+  return pts;
+}
 
 function W()     { return canvas.offsetWidth; }
 function H()     { return canvas.offsetHeight; }
@@ -126,6 +222,8 @@ let hoveredN = null;
 let orbit      = [];
 let orbitStep  = 0;
 let arcT       = 0;
+let pauseT     = 0;
+const PAUSE_DUR = 0.4;
 let isPlaying  = false;
 let speed      = 1.0;
 
@@ -144,13 +242,18 @@ function setOrbit(start) {
   orbit = computeOrbit(start);
   orbitStep = 0;
   arcT = 0;
+  pauseT = 0;
   isPlaying = false;
+  resetView();
   updateOrbitControls();
+  updateOrbitPanel();
 }
 
 function clearOrbit() {
-  orbit = []; orbitStep = 0; arcT = 0; isPlaying = false;
+  orbit = []; orbitStep = 0; arcT = 0; pauseT = 0; isPlaying = false;
+  resetView();
   updateOrbitControls();
+  updateOrbitPanel();
   document.getElementById('stepInfo').textContent = 'click a number to trace';
 }
 
@@ -160,6 +263,7 @@ function updateOrbitControls() {
   document.getElementById('btnStep').disabled  = !canAdvance || isPlaying;
   document.getElementById('btnPlay').disabled  = !canAdvance;
   document.getElementById('btnReset').disabled = !hasOrbit;
+  document.getElementById('btnClear').disabled = !hasOrbit;
   document.getElementById('btnPlay').textContent = isPlaying ? '⏸' : '▶';
   if (hasOrbit) {
     const cur = orbit[orbitStep];
@@ -167,6 +271,32 @@ function updateOrbitControls() {
       ? `step ${orbitStep}: n = ${cur.toFixed(3)}`
       : `step ${orbitStep}: → ∞`;
   }
+}
+
+function fmtVal(v) {
+  if (!isFinite(v)) return '∞';
+  const a = Math.abs(v);
+  if (a >= 1e9) return v.toExponential(2);
+  if (a >= 1e6) return (v/1e6).toFixed(2) + 'M';
+  if (a >= 1e3) return (v/1e3).toFixed(2) + 'k';
+  if (a >= 100) return v.toFixed(1);
+  if (a >= 10)  return v.toFixed(2);
+  return v.toFixed(3);
+}
+
+function updateOrbitPanel() {
+  const panel = document.getElementById('orbitPanel');
+  const terms = document.getElementById('orbitTerms');
+  if (!orbit.length) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  terms.innerHTML = '';
+  for (let i = 0; i <= orbitStep && i < orbit.length; i++) {
+    const div = document.createElement('div');
+    div.className = 'term' + (i === orbitStep ? ' current' : '');
+    div.innerHTML = `<span class="idx">n<sub>${i}</sub></span><span>${fmtVal(orbit[i])}</span>`;
+    terms.appendChild(div);
+  }
+  panel.scrollTop = panel.scrollHeight;
 }
 
 function ease(t) { return t < 0.5 ? 2*t*t : -1 + (4 - 2*t)*t; }
@@ -254,12 +384,12 @@ function drawNumberLine() {
   ctx.beginPath(); ctx.moveTo(W()-2,ly); ctx.lineTo(W()-12,ly-5); ctx.lineTo(W()-12,ly+5);
   ctx.closePath(); ctx.fillStyle = '#333'; ctx.fill();
   ctx.font = '13px Georgia'; ctx.textAlign = 'center';
-  for (let n = Math.ceil(VIEW_MIN); n <= Math.floor(VIEW_MAX); n++) {
+  nicePoints().forEach(n => {
     const cx = toCanvasX(n);
     ctx.beginPath(); ctx.moveTo(cx, ly-7); ctx.lineTo(cx, ly+7);
     ctx.strokeStyle='#333'; ctx.lineWidth = n===0?1.8:1; ctx.stroke();
     ctx.fillStyle='#444'; ctx.fillText(n, cx, ly+22);
-  }
+  });
 }
 
 function drawFixedPoints() {
@@ -480,23 +610,35 @@ function loop(ts) {
   lastTs = ts;
 
   if (isPlaying && orbit.length && orbitStep < orbit.length - 1) {
-    arcT += dt * speed;
-    if (arcT >= 1) {
-      arcT = 0;
-      orbitStep++;
-      if (orbitStep >= orbit.length - 1 || !isFinite(orbit[orbitStep])) {
-        isPlaying = false;
+    if (pauseT > 0) {
+      pauseT -= dt;
+    } else {
+      const _a = orbit[orbitStep], _b = orbit[orbitStep + 1];
+      arcT += dt * speed;
+      showArcInView(_a, _b);
+      if (arcT >= 1) {
+        arcT = 0;
+        pauseT = PAUSE_DUR;
+        orbitStep++;
+        if (orbitStep >= orbit.length - 1 || !isFinite(orbit[orbitStep])) {
+          isPlaying = false;
+          pauseT = 0;
+        }
+        updateOrbitControls();
+        updateOrbitPanel();
+        centerTightOnPoint(orbit[orbitStep]);
       }
-      updateOrbitControls();
     }
   }
+
+  stepView();
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = '#faf9f5';
   ctx.fillRect(0, 0, W(), H());
 
   drawFateBackground();
-  drawStaticArcs();
+  if (!orbit.length) drawStaticArcs();
   drawNumberLine();
   drawFixedPoints();
   drawLegend();
@@ -534,6 +676,10 @@ document.getElementById('btnPlay').addEventListener('click', () => {
 
 document.getElementById('btnReset').addEventListener('click', () => {
   if (orbit.length) setOrbit(orbit[0]);
+});
+
+document.getElementById('btnClear').addEventListener('click', () => {
+  clearOrbit();
 });
 
 canvas.addEventListener('click', e => {
