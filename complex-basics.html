@@ -16,19 +16,54 @@
     canvas { flex: 1; display: block; width: 100%; cursor: grab; }
     canvas.dragging { cursor: grabbing; }
     #controls {
-      padding: 12px 28px;
+      padding: 10px 28px 12px;
       background: #faf9f5;
       border-top: 1px solid #e0ddd5;
       display: flex;
-      align-items: center;
-      gap: 24px;
+      flex-direction: column;
+      gap: 8px;
     }
-    #transform-label { font-size: 19px; color: #222; min-width: 200px; }
-    .btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
+    #controls-top {
+      display: flex;
+      align-items: baseline;
+      gap: 0;
+    }
+    #zLabel {
+      font-size: 15px;
+      color: #555;
+      font-family: monospace;
+    }
+    #controls-bottom {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    #tab-bar {
+      display: flex;
+      gap: 20px;
+    }
+    button.tab {
+      font-family: Georgia, serif;
+      font-size: 12px;
+      padding: 0 0 5px;
+      border: none;
+      border-bottom: 2px solid transparent;
+      background: transparent;
+      border-radius: 0;
+      cursor: pointer;
+      color: #bbb;
+      transition: all 0.15s;
+      white-space: nowrap;
+      letter-spacing: 0.02em;
+    }
+    button.tab:hover { color: #777; background: transparent; border-color: transparent; }
+    button.tab.active { color: #222; background: transparent; border-color: transparent; border-bottom-color: #222; }
+    .tab-content { display: none; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .tab-content.visible { display: flex; }
     button {
       font-family: Georgia, serif;
       font-size: 13px;
-      padding: 6px 16px;
+      padding: 5px 14px;
       border: 1px solid #ccc;
       background: #fff;
       border-radius: 20px;
@@ -38,31 +73,63 @@
     }
     button:hover { background: #f0ede8; border-color: #bbb; }
     button.active { background: #222; color: #fff; border-color: #222; }
-    #zLabel {
-      margin-left: auto;
-      font-size: 13px;
-      color: #888;
-      font-family: monospace;
-      min-width: 260px;
-      text-align: right;
+    .custom-expr {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 14px;
+      color: #666;
+      font-family: Georgia, serif;
     }
+    .custom-expr input {
+      font-family: monospace;
+      font-size: 14px;
+      width: 42px;
+      padding: 3px 0 2px;
+      border: none;
+      border-bottom: 1.5px solid #ccc;
+      background: transparent;
+      color: #222;
+      text-align: center;
+    }
+    .custom-expr input:focus { outline: none; border-bottom-color: #888; }
   </style>
 </head>
 <body>
 <canvas id="canvas"></canvas>
 <div id="controls">
-  <div id="transform-label">z</div>
-  <div class="btn-group">
-    <button class="active" data-t="identity">z</button>
-    <button data-t="timesJ">z · j</button>
-    <button data-t="timesJ2">z · j²</button>
-    <button data-t="timesJ3">z · j³</button>
-    <button data-t="conjugate">z̄  (conjugate)</button>
-    <button data-t="modulus">|z|  (modulus)</button>
-    <button data-t="squared">z²</button>
-    <button data-t="add1">z + 1</button>
+  <div id="controls-top">
+    <div id="zLabel">drag the point</div>
   </div>
-  <div id="zLabel">drag the point</div>
+  <div id="controls-bottom">
+    <div id="tab-bar">
+      <button class="tab active" data-tab="transform">Transformations</button>
+      <button class="tab" data-tab="arithmetic">Arithmetic</button>
+    </div>
+    <div id="tab-transform" class="tab-content visible">
+      <button class="active" data-t="identity">z</button>
+      <button data-t="timesJ">z · j</button>
+      <button data-t="timesJ2">z · j²</button>
+      <button data-t="timesJ3">z · j³</button>
+      <button data-t="conjugate">z̄</button>
+      <button data-t="modulus">|z|</button>
+      <button data-t="squared">z²</button>
+      <button data-t="add1">z + 1</button>
+      <button data-t="sub1">z − 1</button>
+    </div>
+    <div id="tab-arithmetic" class="tab-content">
+      <div class="custom-expr">
+        c =
+        <input type="number" id="customRe" value="2" step="0.5">
+        <span id="imSign">+</span>
+        <input type="number" id="customIm" value="1" step="0.5" min="0">
+        j
+      </div>
+      <button data-t="customAdd">z + c</button>
+      <button data-t="customSub">z − c</button>
+      <button data-t="customMul">z × c</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -70,6 +137,7 @@ const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
 let W, H, originX, originY, scale;
+let panX = 0, panY = 0; // grid pan offset in pixels
 
 function resize() {
   W = canvas.width  = canvas.offsetWidth  * devicePixelRatio;
@@ -85,6 +153,39 @@ function resize() {
 let z = { re: 2, im: 1 };
 let transform = 'identity';
 
+// ── Hop animation state (addition/subtraction) ──
+let animating = false;
+let animPath = [];
+let animStep = 0;
+let animT = 0;
+let animRAF = null;
+const ANIM_TRANSFORMS = new Set(['add1', 'sub1', 'customAdd', 'customSub']);
+
+// ── Rotation animation state ──
+let rotAnimating = false;
+let rotT = 0;
+let rotRAF = null;
+const ROT_TRANSFORMS = new Set(['timesJ', 'timesJ2', 'timesJ3']);
+// Canvas angle delta (negative = CCW visual, positive = CW visual) and ctx.arc anticlockwise flag
+const ROT_CANVAS_DELTA = { timesJ: -Math.PI/2, timesJ2: -Math.PI, timesJ3: Math.PI/2 };
+const ROT_CCW          = { timesJ: true,        timesJ2: true,      timesJ3: false };
+const ROT_LABEL        = { timesJ: '90°',        timesJ2: '180°',    timesJ3: '−90°' };
+
+function startRotAnimation() {
+  if (rotRAF) cancelAnimationFrame(rotRAF);
+  if (animating) { cancelAnimationFrame(animRAF); animating = false; }
+  if (Math.hypot(z.re, z.im) < 0.01) { draw(); return; }
+  rotT = 0; rotAnimating = true;
+  rotRAF = requestAnimationFrame(rotFrame);
+}
+
+function rotFrame() {
+  rotT += 0.018;
+  if (rotT >= 1) { rotT = 1; rotAnimating = false; rotRAF = null; }
+  draw();
+  if (rotAnimating) rotRAF = requestAnimationFrame(rotFrame);
+}
+
 function applyTransform(z) {
   switch (transform) {
     case 'identity': return { re: z.re, im: z.im };
@@ -95,7 +196,95 @@ function applyTransform(z) {
     case 'modulus':  return { re: Math.hypot(z.re, z.im), im: 0 }; // length, on real axis
     case 'squared':  return { re: z.re*z.re - z.im*z.im, im: 2*z.re*z.im };
     case 'add1':     return { re: z.re + 1, im: z.im };
+    case 'sub1':     return { re: z.re - 1, im: z.im };
+    case 'customAdd': { const { a, b } = getCustomC(); return { re: z.re + a, im: z.im + b }; }
+    case 'customSub': { const { a, b } = getCustomC(); return { re: z.re - a, im: z.im - b }; }
+    case 'customMul': {
+      const { a, b } = getCustomC();
+      return { re: z.re * a - z.im * b, im: z.re * b + z.im * a };
+    }
   }
+}
+
+function easeInOut(t) { return t < 0.5 ? 2*t*t : -1 + (4 - 2*t)*t; }
+
+function buildAnimPath(from, to) {
+  // Integer hops (step=1) first, then one small fractional hop for the remainder
+  const dre = to.re - from.re;
+  const dim  = to.im - from.im;
+  const reInt = Math.trunc(dre), reFrac = dre - reInt;
+  const imInt = Math.trunc(dim), imFrac = dim - imInt;
+  const rs = Math.sign(dre), is = Math.sign(dim);
+  const path = [{ re: from.re, im: from.im }];
+  let cur = { ...path[0] };
+  for (let i = 0; i < Math.abs(reInt); i++) {
+    cur = { re: Math.round((cur.re + rs) * 1e9) / 1e9, im: cur.im };
+    path.push({ ...cur });
+  }
+  if (Math.abs(reFrac) > 1e-9) {
+    cur = { re: Math.round((cur.re + reFrac) * 1e9) / 1e9, im: cur.im };
+    path.push({ ...cur });
+  }
+  for (let i = 0; i < Math.abs(imInt); i++) {
+    cur = { re: cur.re, im: Math.round((cur.im + is) * 1e9) / 1e9 };
+    path.push({ ...cur });
+  }
+  if (Math.abs(imFrac) > 1e-9) {
+    cur = { re: cur.re, im: Math.round((cur.im + imFrac) * 1e9) / 1e9 };
+    path.push({ ...cur });
+  }
+  return path;
+}
+
+// Draw a quadratic bezier arc from 'from' to 'to', bowing outward from origin.
+// t = progress 0→1. Returns pixel position of the tip.
+function drawHopArc(from, to, t, color, alpha) {
+  const [ax, ay] = toPixel(from.re, from.im);
+  const [bx, by] = toPixel(to.re, to.im);
+  const mx = (ax + bx) / 2, my = (ay + by) / 2;
+  const ox = mx - originX - panX, oy = my - originY - panY;
+  const od = Math.hypot(ox, oy) || 1;
+  const bow = Math.hypot(bx - ax, by - ay) * 0.55;
+  const cpx = mx + (ox / od) * bow;
+  const cpy = my + (oy / od) * bow;
+  ctx.save();
+  ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.globalAlpha = alpha;
+  ctx.beginPath(); ctx.moveTo(ax, ay);
+  if (t >= 1) {
+    ctx.quadraticCurveTo(cpx, cpy, bx, by);
+    ctx.stroke(); ctx.restore();
+    return [bx, by];
+  }
+  // Partial arc via de Casteljau
+  const p1x = ax + (cpx - ax) * t, p1y = ay + (cpy - ay) * t;
+  const p2x = cpx + (bx - cpx) * t, p2y = cpy + (by - cpy) * t;
+  const ex = p1x + (p2x - p1x) * t, ey = p1y + (p2y - p1y) * t;
+  ctx.quadraticCurveTo(p1x, p1y, ex, ey);
+  ctx.stroke(); ctx.restore();
+  return [ex, ey];
+}
+
+function startAnimation() {
+  if (animRAF) cancelAnimationFrame(animRAF);
+  animating = false;
+  const w = applyTransform(z);
+  animPath = buildAnimPath(z, w);
+  if (animPath.length <= 1) { draw(); return; }
+  animStep = 0; animT = 0; animating = true;
+  animRAF = requestAnimationFrame(animFrame);
+}
+
+function animFrame() {
+  animT += 0.02;
+  if (animT >= 1) {
+    animStep++;
+    if (animStep >= animPath.length - 1) {
+      animating = false; animRAF = null; draw(); return;
+    }
+    animT = 0;
+  }
+  draw();
+  animRAF = requestAnimationFrame(animFrame);
 }
 
 const TRANSFORM_LABELS = {
@@ -107,11 +296,15 @@ const TRANSFORM_LABELS = {
   modulus:   '|z|  →  distance from origin',
   squared:   'z²  →  double the angle, square the length',
   add1:      'z + 1  →  shift right by 1',
+  sub1:      'z − 1  →  shift left by 1',
+  customAdd: 'z + c  →  shift by c',
+  customSub: 'z − c  →  shift by −c',
+  customMul: 'z × c  →  rotate & scale by c',
 };
 
 // Coordinate helpers
-function toPixel(re, im)  { return [originX + re * scale, originY - im * scale]; }
-function toComplex(px, py){ return { re: (px - originX) / scale, im: -(py - originY) / scale }; }
+function toPixel(re, im)  { return [originX + panX + re * scale, originY + panY - im * scale]; }
+function toComplex(px, py){ return { re: (px - originX - panX) / scale, im: -(py - originY - panY) / scale }; }
 
 // Drawing helpers
 function drawArrow(x1, y1, x2, y2, color, lw = 2, alpha = 1) {
@@ -161,7 +354,7 @@ function drawAngleArc(fromAngle, toAngle, radius, color) {
   ctx.beginPath();
   // Draw arc from fromAngle to toAngle (both measured from positive real axis)
   const start = -fromAngle, end = -toAngle; // canvas y is flipped
-  ctx.arc(originX, originY, radius, start, end, fromAngle > toAngle);
+  ctx.arc(originX + panX, originY + panY, radius, start, end, fromAngle > toAngle);
   ctx.stroke();
   ctx.setLineDash([]);
   ctx.restore();
@@ -177,53 +370,57 @@ function draw() {
   const gridStep = 1; // 1 unit
   ctx.strokeStyle = 'rgba(0,0,0,0.06)';
   ctx.lineWidth = 1;
-  for (let r = -10; r <= 10; r++) {
+  for (let r = -30; r <= 30; r++) {
     const [px] = toPixel(r, 0);
+    if (px < -1 || px > cw + 1) continue;
     ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, ch); ctx.stroke();
   }
-  for (let i = -10; i <= 10; i++) {
+  for (let i = -30; i <= 30; i++) {
     const [,py] = toPixel(0, i);
+    if (py < -1 || py > ch + 1) continue;
     ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(cw, py); ctx.stroke();
   }
 
   // ── Axes ──
+  const ox = originX + panX, oy = originY + panY;
   ctx.strokeStyle = 'rgba(0,0,0,0.25)';
   ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(0, originY); ctx.lineTo(cw, originY); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(originX, 0); ctx.lineTo(originX, ch); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, oy); ctx.lineTo(cw, oy); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(ox, 0); ctx.lineTo(ox, ch); ctx.stroke();
 
   // Axis labels
   ctx.font = '13px Georgia'; ctx.fillStyle = 'rgba(0,0,0,0.4)';
   ctx.textAlign = 'center';
-  ctx.fillText('Real', cw - 30, originY - 10);
-  ctx.fillText('j', originX + 14, 20);
+  ctx.fillText('Real', cw - 30, oy - 10);
+  ctx.fillText('j', ox + 14, 20);
 
   // Tick labels
   ctx.font = '11px monospace'; ctx.fillStyle = 'rgba(0,0,0,0.3)';
-  for (let r = -8; r <= 8; r++) {
+  for (let r = -20; r <= 20; r++) {
     if (r === 0) continue;
     const [px] = toPixel(r, 0);
     if (px < 20 || px > cw - 20) continue;
     ctx.textAlign = 'center';
-    ctx.fillText(r, px, originY + 16);
+    ctx.fillText(r, px, oy + 16);
   }
-  for (let i = -8; i <= 8; i++) {
+  for (let i = -20; i <= 20; i++) {
     if (i === 0) continue;
     const [,py] = toPixel(0, i);
     if (py < 10 || py > ch - 10) continue;
     ctx.textAlign = 'right';
-    ctx.fillText(i === 1 ? 'j' : i === -1 ? '−j' : `${i}j`, originX - 8, py + 4);
+    ctx.fillText(i === 1 ? 'j' : i === -1 ? '−j' : `${i}j`, ox - 8, py + 4);
   }
 
   const w = applyTransform(z);
 
   // ── Modulus circle (dashed) ──
   const modZ = Math.hypot(z.re, z.im);
+  const cx0 = originX + panX, cy0 = originY + panY;
   ctx.save();
   ctx.strokeStyle = 'rgba(0,0,0,0.08)';
   ctx.lineWidth = 1;
   ctx.setLineDash([4, 6]);
-  ctx.beginPath(); ctx.arc(originX, originY, modZ * scale, 0, Math.PI * 2);
+  ctx.beginPath(); ctx.arc(cx0, cy0, modZ * scale, 0, Math.PI * 2);
   ctx.stroke(); ctx.setLineDash([]); ctx.restore();
 
   // ── Angle arc showing rotation ──
@@ -233,71 +430,130 @@ function draw() {
     drawAngleArc(angleZ, angleW, modZ * scale * 0.5, '#888');
   }
 
-  // ── Dashed line from z to w (when different) ──
+  // ── Points, arrows, animation ──
   const [zx, zy] = toPixel(z.re, z.im);
   const [wx, wy] = toPixel(w.re, w.im);
   const dist = Math.hypot(wx - zx, wy - zy);
-  if (dist > 4 && transform !== 'identity') {
+
+  if (rotAnimating && ROT_TRANSFORMS.has(transform)) {
+    // ── Rotation sweep animation ──
+    const et = easeInOut(rotT);
+    const cx0 = originX + panX, cy0 = originY + panY;
+    const r = Math.hypot(z.re, z.im);
+    const canvasAngleZ = Math.atan2(zy - cy0, zx - cx0);
+    const delta = ROT_CANVAS_DELTA[transform];
+    const curAngle = canvasAngleZ + delta * et;
+    const dotX = cx0 + r * scale * Math.cos(curAngle);
+    const dotY = cy0 + r * scale * Math.sin(curAngle);
+
+    // Swept arc along the modulus circle
     ctx.save();
-    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
-    ctx.lineWidth = 1.2;
-    ctx.setLineDash([5, 5]);
-    ctx.beginPath(); ctx.moveTo(zx, zy); ctx.lineTo(wx, wy);
-    ctx.stroke(); ctx.setLineDash([]); ctx.restore();
-  }
-
-  // ── Arrow: origin → z (orange) ──
-  drawArrow(originX, originY, zx, zy, '#c06020', 2.5);
-
-  // ── Arrow: origin → w (purple), if different ──
-  if (dist > 4 || transform !== 'identity') {
-    drawArrow(originX, originY, wx, wy, '#6030c0', 2.5, transform === 'identity' ? 0 : 1);
-  }
-
-  // ── Dot at z ──
-  drawDot(zx, zy, 7, '#c06020');
-
-  // ── Dot at w ──
-  if (transform !== 'identity') {
-    drawDot(wx, wy, 7, '#6030c0');
-  }
-
-  // ── Labels at z and w ──
-  ctx.font = 'bold 14px Georgia';
-  const zSign = z.im >= 0 ? '+' : '−';
-  const zStr  = `z = ${z.re.toFixed(2)} ${zSign} ${Math.abs(z.im).toFixed(2)}j`;
-  ctx.fillStyle = '#c06020';
-  ctx.textAlign = zx > originX + 20 ? 'left' : 'right';
-  ctx.fillText('z', zx + (zx > originX ? 12 : -12), zy - 12);
-  ctx.font = '12px Georgia';
-  ctx.fillText(zStr, zx + (zx > originX ? 12 : -12), zy + 4);
-
-  if (transform !== 'identity') {
-    const wSign = w.im >= 0 ? '+' : '−';
-    const wStr  = `${w.re.toFixed(2)} ${wSign} ${Math.abs(w.im).toFixed(2)}j`;
-    ctx.fillStyle = '#6030c0';
-    ctx.font = 'bold 14px Georgia';
-    ctx.textAlign = wx > originX + 20 ? 'left' : 'right';
-    ctx.fillText('result', wx + (wx > originX ? 12 : -12), wy - 12);
-    ctx.font = '12px Georgia';
-    ctx.fillText(wStr, wx + (wx > originX ? 12 : -12), wy + 4);
-  }
-
-  // ── Modulus line ──
-  if (transform === 'modulus') {
-    ctx.save();
-    ctx.strokeStyle = '#30a060';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([6, 4]);
+    ctx.strokeStyle = '#30a080';
+    ctx.lineWidth = 2.5;
+    ctx.globalAlpha = 0.75;
     ctx.beginPath();
-    ctx.moveTo(originX, originY); ctx.lineTo(zx, zy);
-    ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle = '#30a060';
-    ctx.font = 'bold 13px Georgia';
-    ctx.textAlign = 'center';
-    const mx = (originX + zx) / 2, my = (originY + zy) / 2;
-    ctx.fillText(`|z| = ${modZ.toFixed(2)}`, mx - 18, my - 10);
+    ctx.arc(cx0, cy0, r * scale, canvasAngleZ, curAngle, ROT_CCW[transform]);
+    ctx.stroke();
     ctx.restore();
+
+    // Angle label
+    const labelAngle = canvasAngleZ + delta * et * 0.5;
+    const labelR = r * scale + 22;
+    ctx.save();
+    ctx.font = '13px Georgia';
+    ctx.fillStyle = '#30a080';
+    ctx.globalAlpha = et;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(ROT_LABEL[transform], cx0 + labelR * Math.cos(labelAngle), cy0 + labelR * Math.sin(labelAngle));
+    ctx.restore();
+
+    drawArrow(cx0, cy0, zx, zy, '#c06020', 2.5);
+    drawArrow(cx0, cy0, dotX, dotY, '#30a080', 2, 0.7 * et);
+    drawDot(zx, zy, 7, '#c06020');
+    drawDot(dotX, dotY, 7, '#30a080');
+    ctx.font = 'bold 14px Georgia';
+    ctx.fillStyle = '#c06020';
+    ctx.textAlign = zx > cx0 + 20 ? 'left' : 'right';
+    ctx.fillText('z', zx + (zx > cx0 ? 12 : -12), zy - 12);
+
+  } else if (animating && ANIM_TRANSFORMS.has(transform)) {
+    // ── Hop animation: arc through each integer grid step ──
+    drawArrow(originX + panX, originY + panY, zx, zy, '#c06020', 2.5);
+    // Completed hops (faded)
+    for (let i = 0; i < animStep && i < animPath.length - 1; i++) {
+      drawHopArc(animPath[i], animPath[i + 1], 1, '#30a080', 0.25);
+    }
+    // Waypoint dots at completed intermediate steps
+    for (let i = 1; i <= animStep && i < animPath.length - 1; i++) {
+      const [px, py] = toPixel(animPath[i].re, animPath[i].im);
+      drawDot(px, py, 5, '#30a080', 0.45);
+    }
+    // Current hop in progress
+    if (animStep < animPath.length - 1) {
+      const et = easeInOut(animT);
+      const [dotX, dotY] = drawHopArc(animPath[animStep], animPath[animStep + 1], et, '#30a080', 0.9);
+      drawDot(dotX, dotY, 7, '#30a080');
+    }
+    drawDot(zx, zy, 7, '#c06020');
+    ctx.font = 'bold 14px Georgia';
+    ctx.fillStyle = '#c06020';
+    ctx.textAlign = zx > originX + 20 ? 'left' : 'right';
+    ctx.fillText('z', zx + (zx > originX ? 12 : -12), zy - 12);
+  } else {
+    // ── Static display ──
+    if (dist > 4 && transform !== 'identity') {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath(); ctx.moveTo(zx, zy); ctx.lineTo(wx, wy);
+      ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+    }
+
+    drawArrow(originX + panX, originY + panY, zx, zy, '#c06020', 2.5);
+    if (dist > 4 || transform !== 'identity') {
+      drawArrow(originX + panX, originY + panY, wx, wy, '#6030c0', 2.5, transform === 'identity' ? 0 : 1);
+    }
+    drawDot(zx, zy, 7, '#c06020');
+    if (transform !== 'identity') { drawDot(wx, wy, 7, '#6030c0'); }
+
+    ctx.font = 'bold 14px Georgia';
+    const zSign = z.im >= 0 ? '+' : '−';
+    const zStr  = `z = ${z.re.toFixed(2)} ${zSign} ${Math.abs(z.im).toFixed(2)}j`;
+    ctx.fillStyle = '#c06020';
+    ctx.textAlign = zx > originX + 20 ? 'left' : 'right';
+    ctx.fillText('z', zx + (zx > originX ? 12 : -12), zy - 12);
+    ctx.font = '12px Georgia';
+    ctx.fillText(zStr, zx + (zx > originX ? 12 : -12), zy + 4);
+
+    if (transform !== 'identity') {
+      const wSign = w.im >= 0 ? '+' : '−';
+      const wStr  = `${w.re.toFixed(2)} ${wSign} ${Math.abs(w.im).toFixed(2)}j`;
+      ctx.fillStyle = '#6030c0';
+      ctx.font = 'bold 14px Georgia';
+      ctx.textAlign = wx > originX + 20 ? 'left' : 'right';
+      ctx.fillText('result', wx + (wx > originX ? 12 : -12), wy - 12);
+      ctx.font = '12px Georgia';
+      ctx.fillText(wStr, wx + (wx > originX ? 12 : -12), wy + 4);
+    }
+
+    // ── Modulus line ──
+    if (transform === 'modulus') {
+      ctx.save();
+      ctx.strokeStyle = '#30a060';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(originX + panX, originY + panY); ctx.lineTo(zx, zy);
+      ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = '#30a060';
+      ctx.font = 'bold 13px Georgia';
+      ctx.textAlign = 'center';
+      const mx = (originX + zx) / 2, my = (originY + zy) / 2;
+      ctx.fillText(`|z| = ${modZ.toFixed(2)}`, mx - 18, my - 10);
+      ctx.restore();
+    }
   }
 
   // Update z label in controls
@@ -312,9 +568,11 @@ function draw() {
 
 // ── Dragging ──
 let dragging = false;
+let panning = false;
+let panStart = null;
+
 function getPos(e) {
   const r = canvas.getBoundingClientRect();
-  const dpr = devicePixelRatio;
   return { x: (e.clientX - r.left), y: (e.clientY - r.top) };
 }
 
@@ -325,7 +583,16 @@ function hitTest(pos) {
 
 canvas.addEventListener('mousedown', e => {
   const pos = getPos(e);
-  if (hitTest(pos)) { dragging = true; canvas.classList.add('dragging'); }
+  if (hitTest(pos)) {
+    if (animating) { cancelAnimationFrame(animRAF); animating = false; }
+    if (rotAnimating) { cancelAnimationFrame(rotRAF); rotAnimating = false; }
+    dragging = true;
+    canvas.classList.add('dragging');
+  } else {
+    panning = true;
+    panStart = { x: pos.x, y: pos.y, panX, panY };
+    canvas.classList.add('dragging');
+  }
 });
 
 canvas.addEventListener('mousemove', e => {
@@ -333,13 +600,37 @@ canvas.addEventListener('mousemove', e => {
   if (dragging) {
     z = toComplex(pos.x, pos.y);
     draw();
+  } else if (panning) {
+    panX = panStart.panX + (pos.x - panStart.x);
+    panY = panStart.panY + (pos.y - panStart.y);
+    draw();
   } else {
     canvas.style.cursor = hitTest(pos) ? 'grab' : 'default';
   }
 });
 
-canvas.addEventListener('mouseup', () => { dragging = false; canvas.classList.remove('dragging'); });
-canvas.addEventListener('mouseleave', () => { dragging = false; canvas.classList.remove('dragging'); });
+canvas.addEventListener('mouseup', () => {
+  if (dragging) {
+    dragging = false;
+    const snapThreshold = 0.2;
+    const snappedRe = Math.round(z.re);
+    const snappedIm = Math.round(z.im);
+    z = {
+      re: Math.abs(z.re - snappedRe) < snapThreshold ? snappedRe : z.re,
+      im: Math.abs(z.im - snappedIm) < snapThreshold ? snappedIm : z.im,
+    };
+    if (ANIM_TRANSFORMS.has(transform)) { startAnimation(); }
+    else if (ROT_TRANSFORMS.has(transform)) { startRotAnimation(); }
+    else { draw(); }
+  }
+  panning = false;
+  panStart = null;
+  canvas.classList.remove('dragging');
+});
+canvas.addEventListener('mouseleave', () => {
+  dragging = false; panning = false; panStart = null;
+  canvas.classList.remove('dragging');
+});
 
 // ── Buttons ──
 document.querySelectorAll('[data-t]').forEach(btn => {
@@ -347,10 +638,97 @@ document.querySelectorAll('[data-t]').forEach(btn => {
     document.querySelectorAll('[data-t]').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     transform = btn.dataset.t;
-    document.getElementById('transform-label').textContent = TRANSFORM_LABELS[transform];
-    draw();
+    updateTransformLabel();
+    updateImSign();
+    if (ANIM_TRANSFORMS.has(transform)) { startAnimation(); }
+    else if (ROT_TRANSFORMS.has(transform)) { startRotAnimation(); }
+    else { draw(); }
   });
 });
+
+function updateTransformLabel() {
+  // The active button already communicates what's selected; no separate label needed.
+}
+
+function getCustomC() {
+  const a = parseFloat(document.getElementById('customRe').value) || 0;
+  const b = parseFloat(document.getElementById('customIm').value) || 0;
+  return { a, b };
+}
+
+function updateImSign() {
+  const sign = (transform === 'customSub') ? '−' : '+';
+  document.getElementById('imSign').textContent = sign;
+}
+
+// ── Tab switching ──
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('visible'));
+    document.getElementById('tab-' + tab.dataset.tab).classList.add('visible');
+  });
+});
+
+// Redraw live when custom inputs change
+['customRe', 'customIm'].forEach(id => {
+  document.getElementById(id).addEventListener('input', () => {
+    if (ANIM_TRANSFORMS.has(transform)) { startAnimation(); } else { draw(); }
+  });
+});
+
+// ── Pinch / scroll to zoom ──
+function zoomAt(px, py, factor) {
+  const reAtPt = (px - originX - panX) / scale;
+  const imAtPt = -(py - originY - panY) / scale;
+  scale *= factor;
+  panX = px - originX - reAtPt * scale;
+  panY = py - originY + imAtPt * scale;
+  draw();
+}
+
+// Trackpad pinch fires as wheel + ctrlKey on Mac
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const pos = getPos(e);
+  if (e.ctrlKey) {
+    // Pinch to zoom
+    const factor = Math.pow(0.99, e.deltaY);
+    zoomAt(pos.x, pos.y, factor);
+  } else {
+    // Two-finger scroll to pan
+    panX -= e.deltaX;
+    panY -= e.deltaY;
+    draw();
+  }
+}, { passive: false });
+
+// Touch pinch (actual touchscreens)
+let lastPinchDist = null;
+canvas.addEventListener('touchstart', e => {
+  if (e.touches.length === 2) lastPinchDist = Math.hypot(
+    e.touches[0].clientX - e.touches[1].clientX,
+    e.touches[0].clientY - e.touches[1].clientY
+  );
+}, { passive: true });
+
+canvas.addEventListener('touchmove', e => {
+  if (e.touches.length === 2 && lastPinchDist) {
+    e.preventDefault();
+    const dist = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+    const r = canvas.getBoundingClientRect();
+    const mx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - r.left;
+    const my = (e.touches[0].clientY + e.touches[1].clientY) / 2 - r.top;
+    zoomAt(mx, my, dist / lastPinchDist);
+    lastPinchDist = dist;
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchend', () => { lastPinchDist = null; });
 
 window.addEventListener('resize', () => {
   canvas.width  = canvas.offsetWidth  * devicePixelRatio;
