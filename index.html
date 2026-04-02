@@ -31,25 +31,80 @@
     #cVal { font-size: 14px; color: #333; font-family: monospace; }
     #fpLabel { font-size: 13px; color: #999; }
     .sep { width: 1px; height: 28px; background: #ddd; }
-    .orbit-controls { display: flex; align-items: center; gap: 10px; }
+    .orbit-controls { display: flex; align-items: center; gap: 8px; }
+    .transport {
+      display: flex; align-items: center;
+      background: #f4f2ee;
+      border: 1px solid #e0ddd8;
+      border-radius: 20px;
+      padding: 3px 4px;
+      gap: 2px;
+    }
     button {
       font-family: Georgia, serif;
-      font-size: 14px;
-      padding: 5px 14px;
-      border: 1px solid #ccc;
-      background: #fff;
-      border-radius: 4px;
+      font-size: 13px;
+      padding: 4px 12px;
+      border: none;
+      background: transparent;
+      border-radius: 16px;
       cursor: pointer;
+      color: #555;
+      transition: background 0.12s;
+    }
+    button:hover:not(:disabled) { background: #e8e3dc; }
+    button:disabled { opacity: 0.28; cursor: default; }
+    #btnPlay {
+      background: #2a3d8f;
+      color: #fff;
+      padding: 5px 18px;
+      font-size: 14px;
+    }
+    #btnPlay:hover:not(:disabled) { background: #1e2e6e; }
+    #btnPlay:disabled { background: #2a3d8f; }
+    #stepInfo { font-size: 13px; color: #e0728a; min-width: 160px; font-style: italic; }
+    .hint { font-size: 12px; color: #bbb; font-style: italic; margin-left: auto; }
+    #orbitPanel {
+      position: absolute;
+      top: 16px; right: 16px;
+      width: 175px;
+      max-height: 55vh;
+      background: rgba(250,249,245,0.93);
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-family: monospace;
+      font-size: 12px;
+      overflow-y: auto;
+      display: none;
+      pointer-events: none;
+    }
+    #orbitPanel .panel-title {
+      font-family: Georgia, serif;
+      font-size: 11px;
+      color: #999;
+      margin-bottom: 6px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    #orbitPanel .term {
+      display: flex;
+      justify-content: space-between;
+      padding: 2px 0;
+      border-bottom: 1px solid #f0ede8;
       color: #444;
     }
-    button:hover { background: #f0ede8; }
-    button:disabled { opacity: 0.3; cursor: default; }
-    #stepInfo { font-size: 13px; color: #7050c0; min-width: 160px; font-style: italic; }
-    .hint { font-size: 12px; color: #bbb; font-style: italic; margin-left: auto; }
+    #orbitPanel .term.current { color: #e0728a; font-weight: bold; }
+    #orbitPanel .term .idx { color: #aaa; min-width: 28px; }
   </style>
 </head>
 <body>
-<canvas id="canvas"></canvas>
+<div style="position:relative; flex:1; display:flex; flex-direction:column;">
+<canvas id="canvas" style="flex:1; display:block; width:100%; cursor:crosshair;"></canvas>
+<div id="orbitPanel">
+  <div class="panel-title">Sequence</div>
+  <div id="orbitTerms"></div>
+</div>
+</div>
 <div id="controls">
   <div id="formula">f(n) = n² + c</div>
   <label>c = <span id="cVal">+0.00</span>&ensp;
@@ -57,10 +112,13 @@
   </label>
   <div class="sep"></div>
   <div class="orbit-controls">
-    <button id="btnStep" disabled>Step →</button>
-    <button id="btnPlay" disabled>▶ Play</button>
-    <button id="btnReset" disabled>↺</button>
-    <label>Speed <input type="range" id="speedSlider" min="0.3" max="3" step="0.1" value="1"></label>
+    <div class="transport">
+      <button id="btnReset" disabled title="Restart from beginning">↺</button>
+      <button id="btnPlay" disabled>▶</button>
+      <button id="btnStep" disabled title="Step forward">→</button>
+    </div>
+    <button id="btnClear" disabled title="Clear orbit" style="font-size:15px; padding:3px 10px;">×</button>
+    <label style="font-size:12px; color:#aaa;">speed <input type="range" id="speedSlider" min="0.3" max="3" step="0.1" value="1"></label>
   </div>
   <div id="stepInfo">click a number to trace</div>
   <div class="sep"></div>
@@ -73,7 +131,64 @@ const canvas = document.getElementById('canvas');
 const ctx    = canvas.getContext('2d');
 let c = 0;
 
-const VIEW_MIN = -4.5, VIEW_MAX = 5.5;
+const DEFAULT_MIN = -4.5, DEFAULT_MAX = 5.5;
+const VIEW_LIMIT  = 1e6;
+const LERP_SPEED  = 0.025;
+
+let VIEW_MIN = DEFAULT_MIN, VIEW_MAX = DEFAULT_MAX;
+let targetMin = DEFAULT_MIN, targetMax = DEFAULT_MAX;
+
+function resetView() {
+  VIEW_MIN = DEFAULT_MIN; VIEW_MAX = DEFAULT_MAX;
+  targetMin = DEFAULT_MIN; targetMax = DEFAULT_MAX;
+}
+
+function showArcInView(a, b) {
+  if (!isFinite(a) || !isFinite(b)) return;
+  const pad = (targetMax - targetMin) * 0.12;
+  if (a >= targetMin + pad && a <= targetMax - pad &&
+      b >= targetMin + pad && b <= targetMax - pad) return;
+  const lo = Math.min(a, b), hi = Math.max(a, b);
+  const span = Math.max(hi - lo, 1);
+  targetMin = lo - span * 0.35;
+  targetMax = hi + span * 0.35;
+}
+
+function centerTightOnPoint(point) {
+  if (!isFinite(point) || Math.abs(point) > VIEW_LIMIT) return;
+  const prev = orbitStep > 0 ? orbit[orbitStep - 1] : point;
+  const hopSpan = Math.abs(point - prev);
+  const currentRange = targetMax - targetMin;
+  if (hopSpan < currentRange * 0.25) return; // small hop — leave view alone
+  const range = Math.max(Math.abs(point) * 0.1, hopSpan * 0.25, 6);
+  targetMin = point - range * 0.5;
+  targetMax = point + range * 0.5;
+}
+
+function stepView() {
+  VIEW_MIN += (targetMin - VIEW_MIN) * LERP_SPEED;
+  VIEW_MAX += (targetMax - VIEW_MAX) * LERP_SPEED;
+}
+
+function niceInterval(range) {
+  const rough = range / 7;
+  const mag = Math.pow(10, Math.floor(Math.log10(Math.max(rough, 0.001))));
+  const norm = rough / mag;
+  if (norm < 1.5) return mag;
+  if (norm < 3.5) return 2 * mag;
+  if (norm < 7.5) return 5 * mag;
+  return 10 * mag;
+}
+
+function nicePoints() {
+  const interval = niceInterval(VIEW_MAX - VIEW_MIN);
+  const first = Math.ceil(VIEW_MIN / interval) * interval;
+  const pts = [];
+  for (let n = first; n <= VIEW_MAX + interval * 0.01; n += interval) {
+    pts.push(Math.round(n / interval) * interval);
+  }
+  return pts;
+}
 
 function W()     { return canvas.offsetWidth; }
 function H()     { return canvas.offsetHeight; }
@@ -100,10 +215,15 @@ function fixedPoints() {
 }
 function isStable(fp) { return Math.abs(2 * fp) < 1; }
 
+// --- Hover state ---
+let hoveredN = null;
+
 // --- Orbit animation state ---
 let orbit      = [];
 let orbitStep  = 0;
 let arcT       = 0;
+let pauseT     = 0;
+const PAUSE_DUR = 0.4;
 let isPlaying  = false;
 let speed      = 1.0;
 
@@ -122,13 +242,18 @@ function setOrbit(start) {
   orbit = computeOrbit(start);
   orbitStep = 0;
   arcT = 0;
+  pauseT = 0;
   isPlaying = false;
+  resetView();
   updateOrbitControls();
+  updateOrbitPanel();
 }
 
 function clearOrbit() {
-  orbit = []; orbitStep = 0; arcT = 0; isPlaying = false;
+  orbit = []; orbitStep = 0; arcT = 0; pauseT = 0; isPlaying = false;
+  resetView();
   updateOrbitControls();
+  updateOrbitPanel();
   document.getElementById('stepInfo').textContent = 'click a number to trace';
 }
 
@@ -138,13 +263,40 @@ function updateOrbitControls() {
   document.getElementById('btnStep').disabled  = !canAdvance || isPlaying;
   document.getElementById('btnPlay').disabled  = !canAdvance;
   document.getElementById('btnReset').disabled = !hasOrbit;
-  document.getElementById('btnPlay').textContent = isPlaying ? '⏸ Pause' : '▶ Play';
+  document.getElementById('btnClear').disabled = !hasOrbit;
+  document.getElementById('btnPlay').textContent = isPlaying ? '⏸' : '▶';
   if (hasOrbit) {
     const cur = orbit[orbitStep];
     document.getElementById('stepInfo').textContent = isFinite(cur)
       ? `step ${orbitStep}: n = ${cur.toFixed(3)}`
       : `step ${orbitStep}: → ∞`;
   }
+}
+
+function fmtVal(v) {
+  if (!isFinite(v)) return '∞';
+  const a = Math.abs(v);
+  if (a >= 1e9) return v.toExponential(2);
+  if (a >= 1e6) return (v/1e6).toFixed(2) + 'M';
+  if (a >= 1e3) return (v/1e3).toFixed(2) + 'k';
+  if (a >= 100) return v.toFixed(1);
+  if (a >= 10)  return v.toFixed(2);
+  return v.toFixed(3);
+}
+
+function updateOrbitPanel() {
+  const panel = document.getElementById('orbitPanel');
+  const terms = document.getElementById('orbitTerms');
+  if (!orbit.length) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  terms.innerHTML = '';
+  for (let i = 0; i <= orbitStep && i < orbit.length; i++) {
+    const div = document.createElement('div');
+    div.className = 'term' + (i === orbitStep ? ' current' : '');
+    div.innerHTML = `<span class="idx">n<sub>${i}</sub></span><span>${fmtVal(orbit[i])}</span>`;
+    terms.appendChild(div);
+  }
+  panel.scrollTop = panel.scrollHeight;
 }
 
 function ease(t) { return t < 0.5 ? 2*t*t : -1 + (4 - 2*t)*t; }
@@ -184,7 +336,7 @@ function drawArcOffEdge(x1, h, goRight, color) {
   ctx.moveTo(cx1, ly);
   ctx.bezierCurveTo(cx1, ly - h, cx2, ly - h, cx2, ly);
   ctx.strokeStyle = color; ctx.lineWidth = 1.8;
-  ctx.setLineDash([5, 4]); ctx.stroke(); ctx.setLineDash([]);
+  ctx.stroke();
 }
 
 function drawLoop(n, color) {
@@ -200,13 +352,28 @@ function drawLoop(n, color) {
 // --- Draw layers ---
 function drawFateBackground() {
   const ly = lineY();
-  for (let px = 0; px < Math.ceil(W()); px++) {
-    const esc = escapeFraction(toMathX(px));
+  const W_ = Math.ceil(W());
+  // Precompute escape values
+  const vals = new Float32Array(W_);
+  for (let px = 0; px < W_; px++) vals[px] = escapeFraction(toMathX(px));
+  // Smooth with a small box blur to remove discrete banding
+  const blur = 4;
+  const smoothed = new Float32Array(W_);
+  for (let px = 0; px < W_; px++) {
+    let sum = 0, count = 0;
+    for (let d = -blur; d <= blur; d++) {
+      const i = px + d;
+      if (i >= 0 && i < W_) { sum += vals[i]; count++; }
+    }
+    smoothed[px] = sum / count;
+  }
+  for (let px = 0; px < W_; px++) {
+    const esc = smoothed[px];
     let r, g, b;
     if (esc === 0) { r=240; g=220; b=160; }
     else { const t=esc; r=Math.floor(160+t*40); g=Math.floor(180+t*40); b=Math.floor(210+t*45); }
     ctx.fillStyle = `rgba(${r},${g},${b},0.35)`;
-    ctx.fillRect(px, ly - 6, 1, 12);
+    ctx.fillRect(px, ly - 6, 1.5, 12);
   }
 }
 
@@ -217,12 +384,12 @@ function drawNumberLine() {
   ctx.beginPath(); ctx.moveTo(W()-2,ly); ctx.lineTo(W()-12,ly-5); ctx.lineTo(W()-12,ly+5);
   ctx.closePath(); ctx.fillStyle = '#333'; ctx.fill();
   ctx.font = '13px Georgia'; ctx.textAlign = 'center';
-  for (let n = Math.ceil(VIEW_MIN); n <= Math.floor(VIEW_MAX); n++) {
+  nicePoints().forEach(n => {
     const cx = toCanvasX(n);
     ctx.beginPath(); ctx.moveTo(cx, ly-7); ctx.lineTo(cx, ly+7);
     ctx.strokeStyle='#333'; ctx.lineWidth = n===0?1.8:1; ctx.stroke();
     ctx.fillStyle='#444'; ctx.fillText(n, cx, ly+22);
-  }
+  });
 }
 
 function drawFixedPoints() {
@@ -248,9 +415,12 @@ function drawFixedPoints() {
 }
 
 function getArcColor(n) {
-  const esc = escapeFraction(n);
-  if (esc === 0) return '#c06020';
-  const t=esc, r=Math.floor(40+t*40), g=Math.floor(80+t*30), b=Math.floor(170+t*60);
+  const t = escapeFraction(n);
+  if (t === 0) return '#c88228'; // bounded / bouncing → warm amber
+  // escaping: dark navy → bright navy
+  const r = Math.floor(18  + t * 52);   // 18  → 70
+  const g = Math.floor(28  + t * 82);   // 28  → 110
+  const b = Math.floor(100 + t * 140);  // 100 → 240
   return `rgb(${r},${g},${b})`;
 }
 
@@ -266,40 +436,92 @@ function drawStaticArcs() {
   });
   points.sort((a,b)=>a-b);
 
+  const isHovering = hoveredN !== null;
+
   const offRight=[], offLeft=[];
   points.forEach(n => {
     const fn = f(n), diff = fn-n, absDiff = Math.abs(diff);
     const color = getArcColor(n);
-    if (absDiff < 0.02) { drawLoop(n, color); return; }
-    const h = Math.min(absDiff/viewSpan*MAX_ARC_H*3.5, MAX_ARC_H);
-    if (fn >= VIEW_MIN && fn <= VIEW_MAX) {
-      drawArcShape(n, fn, h, color);
-    } else if (fn > VIEW_MAX) {
-      drawArcOffEdge(n, Math.min(h, MAX_ARC_H*0.8), true, color);
-      offRight.push({n, fn, color});
-    } else {
-      drawArcOffEdge(n, Math.min(h, MAX_ARC_H*0.8), false, color);
-      offLeft.push({n, fn, color});
+    const esc = escapeFraction(n);
+    const hovered = isHovering && Math.abs(n - hoveredN) < 0.3;
+    const alpha = isHovering ? (hovered ? 1.0 : 0.1) : 0.85;
+    const lw = hovered ? 2.6 : 1.8;
+    const dashed = esc > 0 && !hovered;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    if (dashed) ctx.setLineDash([5, 4]);
+    if (absDiff < 0.02) { drawLoop(n, color); }
+    else {
+      const h = Math.min(absDiff/viewSpan*MAX_ARC_H*3.5, MAX_ARC_H);
+      if (fn >= VIEW_MIN && fn <= VIEW_MAX) {
+        drawArcShape(n, fn, h, color, lw);
+      } else if (fn > VIEW_MAX) {
+        drawArcOffEdge(n, Math.min(h, MAX_ARC_H*0.8), true, color);
+        if (hovered || !isHovering) offRight.push({n, fn, color});
+      } else {
+        drawArcOffEdge(n, Math.min(h, MAX_ARC_H*0.8), false, color);
+        if (hovered || !isHovering) offLeft.push({n, fn, color});
+      }
+    }
+    ctx.restore();
+
+    // Label for hovered arc
+    if (hovered) {
+      const ly = lineY();
+      const h = Math.min(absDiff/viewSpan*MAX_ARC_H*3.5, MAX_ARC_H);
+      const cx = toCanvasX(n);
+      const fnStr = Math.abs(fn) >= 100 ? Math.round(fn).toString() : fn.toFixed(2);
+      ctx.font = 'bold 13px Georgia';
+      ctx.fillStyle = color;
+      ctx.textAlign = 'center';
+      ctx.fillText(`${n} → ${fnStr}`, cx, ly - h - 14);
     }
   });
 
-  ctx.font='13px Georgia';
-  offRight.forEach(({n,fn,color},i) => {
-    const s = Math.abs(fn)>=100 ? Math.round(fn).toString() : fn.toFixed(1);
-    ctx.fillStyle=color; ctx.textAlign='right';
-    ctx.fillText(`${n} → ${s}`, W()-10, 18+i*19);
-  });
-  offLeft.forEach(({n,fn,color},i) => {
-    const s = Math.abs(fn)>=100 ? Math.round(fn).toString() : fn.toFixed(1);
-    ctx.fillStyle=color; ctx.textAlign='left';
-    ctx.fillText(`${n} → ${s}`, 10, 18+i*19);
-  });
+  if (!isHovering) {
+    ctx.font='13px Georgia';
+    offRight.forEach(({n,fn,color},i) => {
+      const s = Math.abs(fn)>=100 ? Math.round(fn).toString() : fn.toFixed(1);
+      ctx.fillStyle=color; ctx.textAlign='right';
+      ctx.fillText(`${n} → ${s}`, W()-10, 18+i*19);
+    });
+    offLeft.forEach(({n,fn,color},i) => {
+      const s = Math.abs(fn)>=100 ? Math.round(fn).toString() : fn.toFixed(1);
+      ctx.fillStyle=color; ctx.textAlign='left';
+      ctx.fillText(`${n} → ${s}`, 10, 18+i*19);
+    });
+  }
+}
+
+function drawLegend() {
+  const x = 18, y = 18, w = 130, h = 10;
+  ctx.save();
+  ctx.globalAlpha = 0.85;
+  ctx.font = '11px Georgia';
+
+  // Bounded — solid amber arc swatch
+  ctx.strokeStyle = '#c88228'; ctx.lineWidth = 1.8; ctx.setLineDash([]);
+  ctx.beginPath(); ctx.arc(x + 10, y + 5, 8, Math.PI, 0); ctx.stroke();
+  ctx.fillStyle = '#888'; ctx.textAlign = 'left';
+  ctx.fillText('bounded', x + 24, y + 9);
+
+  // Non-bounded — dashed navy swatch
+  const by2 = y + 26;
+  ctx.strokeStyle = 'rgb(40,65,180)'; ctx.lineWidth = 1.8; ctx.setLineDash([5, 4]);
+  ctx.beginPath(); ctx.arc(x + 10, by2 + 5, 8, Math.PI, 0); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#888'; ctx.textAlign = 'left';
+  ctx.fillText('non-bounded', x + 24, by2 + 9);
+
+  ctx.restore();
 }
 
 function drawOrbitAnimation() {
   if (!orbit.length) return;
   const ly = lineY();
-  const ORBIT_COLOR = '#6030c0';
+  const ORBIT_COLOR = '#e0728a';
+  const ORBIT_GLOW  = 'rgba(224, 114, 138,';
 
   // Faded past arcs
   for (let i = 0; i < orbitStep; i++) {
@@ -314,17 +536,17 @@ function drawOrbitAnimation() {
     }
     if (a >= VIEW_MIN && a <= VIEW_MAX) {
       ctx.beginPath(); ctx.arc(toCanvasX(a), ly, 4, 0, Math.PI*2);
-      ctx.fillStyle = `rgba(96,48,192,${alpha})`; ctx.fill();
+      ctx.fillStyle = `${ORBIT_GLOW}${alpha})`; ctx.fill();
     }
   }
 
   // Current position dot
   const curPos = orbit[orbitStep];
   if (isFinite(curPos) && curPos >= VIEW_MIN && curPos <= VIEW_MAX && arcT === 0) {
-    const grd = ctx.createRadialGradient(toCanvasX(curPos), ly, 0, toCanvasX(curPos), ly, 18);
-    grd.addColorStop(0, 'rgba(120,60,230,0.35)');
-    grd.addColorStop(1, 'rgba(120,60,230,0)');
-    ctx.beginPath(); ctx.arc(toCanvasX(curPos), ly, 18, 0, Math.PI*2);
+    const grd = ctx.createRadialGradient(toCanvasX(curPos), ly, 0, toCanvasX(curPos), ly, 22);
+    grd.addColorStop(0, `${ORBIT_GLOW}0.45)`);
+    grd.addColorStop(1, `${ORBIT_GLOW}0)`);
+    ctx.beginPath(); ctx.arc(toCanvasX(curPos), ly, 22, 0, Math.PI*2);
     ctx.fillStyle = grd; ctx.fill();
     ctx.beginPath(); ctx.arc(toCanvasX(curPos), ly, 6, 0, Math.PI*2);
     ctx.fillStyle = ORBIT_COLOR; ctx.fill();
@@ -357,16 +579,17 @@ function drawOrbitAnimation() {
     }
     ctx.strokeStyle = ORBIT_COLOR; ctx.lineWidth = 2.2; ctx.stroke();
 
-    // Traveling dot
+    // Traveling dot with glow
     const dotPt = bezierPt(easedT, cx1,ly_, cx1,ly_-h, cx2,ly_-h, cx2,ly_);
-    const grd = ctx.createRadialGradient(dotPt.x, dotPt.y, 0, dotPt.x, dotPt.y, 14);
-    grd.addColorStop(0, 'rgba(120,60,230,0.4)');
-    grd.addColorStop(1, 'rgba(120,60,230,0)');
-    ctx.beginPath(); ctx.arc(dotPt.x, dotPt.y, 14, 0, Math.PI*2);
+    const grd = ctx.createRadialGradient(dotPt.x, dotPt.y, 0, dotPt.x, dotPt.y, 18);
+    grd.addColorStop(0, `${ORBIT_GLOW}0.5)`);
+    grd.addColorStop(0.4, `${ORBIT_GLOW}0.25)`);
+    grd.addColorStop(1, `${ORBIT_GLOW}0)`);
+    ctx.beginPath(); ctx.arc(dotPt.x, dotPt.y, 18, 0, Math.PI*2);
     ctx.fillStyle = grd; ctx.fill();
     ctx.beginPath(); ctx.arc(dotPt.x, dotPt.y, 6, 0, Math.PI*2);
     ctx.fillStyle = ORBIT_COLOR; ctx.fill();
-    ctx.beginPath(); ctx.arc(dotPt.x, dotPt.y, 3, 0, Math.PI*2);
+    ctx.beginPath(); ctx.arc(dotPt.x, dotPt.y, 2.5, 0, Math.PI*2);
     ctx.fillStyle = '#fff'; ctx.fill();
 
     // Value label near dot
@@ -387,25 +610,40 @@ function loop(ts) {
   lastTs = ts;
 
   if (isPlaying && orbit.length && orbitStep < orbit.length - 1) {
-    arcT += dt * speed;
-    if (arcT >= 1) {
-      arcT = 0;
-      orbitStep++;
-      if (orbitStep >= orbit.length - 1 || !isFinite(orbit[orbitStep])) {
-        isPlaying = false;
+    if (pauseT > 0) {
+      pauseT -= dt;
+    } else {
+      const _a = orbit[orbitStep], _b = orbit[orbitStep + 1];
+      const hopFrac = Math.abs(_b - _a) / Math.max(VIEW_MAX - VIEW_MIN, 1);
+      const dynamicSpeed = speed / Math.max(1, hopFrac * 6);
+      arcT += dt * dynamicSpeed;
+      showArcInView(_a, _b);
+      if (arcT >= 1) {
+        arcT = 0;
+        pauseT = PAUSE_DUR;
+        orbitStep++;
+        if (orbitStep >= orbit.length - 1 || !isFinite(orbit[orbitStep])) {
+          isPlaying = false;
+          pauseT = 0;
+        }
+        updateOrbitControls();
+        updateOrbitPanel();
+        centerTightOnPoint(orbit[orbitStep]);
       }
-      updateOrbitControls();
     }
   }
+
+  stepView();
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = '#faf9f5';
   ctx.fillRect(0, 0, W(), H());
 
   drawFateBackground();
-  drawStaticArcs();
+  if (!orbit.length) drawStaticArcs();
   drawNumberLine();
   drawFixedPoints();
+  drawLegend();
   drawOrbitAnimation();
 
   requestAnimationFrame(loop);
@@ -415,6 +653,7 @@ function loop(ts) {
 document.getElementById('cSlider').addEventListener('input', e => {
   c = parseFloat(e.target.value);
   document.getElementById('cVal').textContent = (c>=0?'+':'') + c.toFixed(2);
+  document.getElementById('formula').textContent = `f(n) = n² ${c>=0?'+':'\u2212'} ${Math.abs(c).toFixed(2)}`;
   if (orbit.length) setOrbit(orbit[0]);
 });
 
@@ -441,6 +680,10 @@ document.getElementById('btnReset').addEventListener('click', () => {
   if (orbit.length) setOrbit(orbit[0]);
 });
 
+document.getElementById('btnClear').addEventListener('click', () => {
+  clearOrbit();
+});
+
 canvas.addEventListener('click', e => {
   const rect = canvas.getBoundingClientRect();
   const py = e.clientY - rect.top;
@@ -454,6 +697,21 @@ canvas.addEventListener('click', e => {
     updateOrbitControls();
   }
 });
+
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const px = e.clientX - rect.left;
+  const py = e.clientY - rect.top;
+  if (Math.abs(py - lineY()) < 55) {
+    const nearest = Math.round(toMathX(px));
+    hoveredN = (nearest >= Math.ceil(VIEW_MIN) && nearest <= Math.floor(VIEW_MAX)) ? nearest : null;
+  } else {
+    hoveredN = null;
+  }
+  canvas.style.cursor = hoveredN !== null ? 'pointer' : 'crosshair';
+});
+
+canvas.addEventListener('mouseleave', () => { hoveredN = null; });
 
 window.addEventListener('resize', () => {
   canvas.width  = canvas.offsetWidth  * devicePixelRatio;
