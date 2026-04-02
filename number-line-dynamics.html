@@ -133,7 +133,7 @@ let c = 0;
 
 const DEFAULT_MIN = -4.5, DEFAULT_MAX = 5.5;
 const VIEW_LIMIT  = 1e6;
-const LERP_SPEED  = 0.04;
+const LERP_SPEED  = 0.025;
 
 let VIEW_MIN = DEFAULT_MIN, VIEW_MAX = DEFAULT_MAX;
 let targetMin = DEFAULT_MIN, targetMax = DEFAULT_MAX;
@@ -614,7 +614,9 @@ function loop(ts) {
       pauseT -= dt;
     } else {
       const _a = orbit[orbitStep], _b = orbit[orbitStep + 1];
-      arcT += dt * speed;
+      const hopFrac = Math.abs(_b - _a) / Math.max(VIEW_MAX - VIEW_MIN, 1);
+      const dynamicSpeed = speed / Math.max(1, hopFrac * 6);
+      arcT += dt * dynamicSpeed;
       showArcInView(_a, _b);
       if (arcT >= 1) {
         arcT = 0;
