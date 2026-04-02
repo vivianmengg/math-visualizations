@@ -114,8 +114,6 @@
       <button data-t="conjugate">z̄</button>
       <button data-t="modulus">|z|</button>
       <button data-t="squared">z²</button>
-      <button data-t="add1">z + 1</button>
-      <button data-t="sub1">z − 1</button>
     </div>
     <div id="tab-arithmetic" class="tab-content">
       <div class="custom-expr">
@@ -159,7 +157,7 @@ let animPath = [];
 let animStep = 0;
 let animT = 0;
 let animRAF = null;
-const ANIM_TRANSFORMS = new Set(['add1', 'sub1', 'customAdd', 'customSub']);
+const ANIM_TRANSFORMS = new Set(['customAdd', 'customSub']);
 
 // ── Rotation animation state ──
 let rotAnimating = false;
@@ -195,8 +193,6 @@ function applyTransform(z) {
     case 'conjugate':return { re: z.re, im: -z.im };        // reflect over real axis
     case 'modulus':  return { re: Math.hypot(z.re, z.im), im: 0 }; // length, on real axis
     case 'squared':  return { re: z.re*z.re - z.im*z.im, im: 2*z.re*z.im };
-    case 'add1':     return { re: z.re + 1, im: z.im };
-    case 'sub1':     return { re: z.re - 1, im: z.im };
     case 'customAdd': { const { a, b } = getCustomC(); return { re: z.re + a, im: z.im + b }; }
     case 'customSub': { const { a, b } = getCustomC(); return { re: z.re - a, im: z.im - b }; }
     case 'customMul': {
